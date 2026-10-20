@@ -1,0 +1,6 @@
+{
+  "name": "Demo Restaurant — Premium Restaurant & Admin Dashboard",
+  "description": "Full-stack restaurant website with online ordering, live order tracking, table reservations, interactive menu, cart management, customer address delivery, and an admin management dashboard.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

@@ -1,0 +1,84 @@
+@import "tailwindcss";
+
+:root {
+  --font-sans: 'Inter', 'Noto Sans Bengali', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  --font-serif: 'Playfair Display', Georgia, Cambria, 'Times New Roman', serif;
+  font-family: var(--font-sans);
+}
+
+@theme {
+  --font-sans: 'Inter', 'Noto Sans Bengali', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  --font-serif: 'Playfair Display', Georgia, Cambria, 'Times New Roman', serif;
+
+  --color-dark: #07131A;
+  --color-dark-surface: #0E1E28;
+  --color-dark-card: #152733;
+  --color-bg-warm: #FAFAF8;
+  --color-gold: #F5B51B;
+  --color-gold-hover: #E9A817;
+  --color-gold-light: #FFF8E7;
+  --color-text-main: #17191C;
+  --color-text-muted: #686B70;
+  --color-border-card: #E9E9E5;
+}
+
+body {
+  font-family: var(--font-sans);
+  font-style: normal;
+  background-color: var(--color-bg-warm);
+  color: var(--color-text-main);
+  overflow-x: hidden;
+}
+
+/* Specific serif headings only when explicit */
+.font-serif-title, .font-serif {
+  font-family: var(--font-serif);
+  font-style: normal;
+}
+
+/* Standard modern numbers for dashboard, metrics and prices - strictly upright sans-serif, bold, never italic */
+.stat-number,
+.currency-number,
+.admin-number,
+.tabular-nums,
+[class*="tabular-nums"],
+.font-mono,
+code,
+kbd,
+samp {
+  font-family: 'Inter', 'Noto Sans Bengali', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif !important;
+  font-style: normal !important;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+}
+
+/* Ensure no accidental italic styling on standard UI elements and numbers */
+span, div, p, h1, h2, h3, h4, td, th, input, select, textarea, button {
+  font-style: normal;
+}
+
+/* Custom scrollbar for modern sleek aesthetic */
+::-webkit-scrollbar {
+  width: 7px;
+  height: 7px;
+}
+::-webkit-scrollbar-track {
+  background: #f1f1ee;
+}
+::-webkit-scrollbar-thumb {
+  background: #cbd0d6;
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #a0a6ae;
+}
+
+/* Print styles for order receipts */
+@media print {
+  .no-print {
+    display: none !important;
+  }
+  .print-only {
+    display: block !important;
+  }
+}
