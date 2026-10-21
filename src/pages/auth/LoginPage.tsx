@@ -22,7 +22,7 @@ import {
 } from 'lucide-react';
 
 export const LoginPage: React.FC<{ isAdminLogin?: boolean }> = ({ isAdminLogin = false }) => {
-  const { signIn, signInWithOtp, isSupabaseReady, setDemoAdminMode } = useAuth();
+  const { signIn, signInWithOtp, isSupabaseReady } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -36,7 +36,9 @@ export const LoginPage: React.FC<{ isAdminLogin?: boolean }> = ({ isAdminLogin =
   const [showKeyModal, setShowKeyModal] = useState(false);
 
   // Target path redirect
-  const from = (location.state as any)?.from?.pathname || (isAdminLogin ? '/admin' : '/account');
+  const searchParams = new URLSearchParams(location.search);
+  const redirectParam = searchParams.get('redirect');
+  const from = redirectParam || (location.state as any)?.from?.pathname || (isAdminLogin ? '/admin' : '/account');
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -259,29 +261,20 @@ export const LoginPage: React.FC<{ isAdminLogin?: boolean }> = ({ isAdminLogin =
           {!isAdminLogin ? (
             <p className="text-xs text-gray-500">
               Don&apos;t have an account yet?{' '}
-              <Link to="/signup" className="font-bold text-[#07131A] hover:underline">
+              <Link
+                to={redirectParam ? `/signup?redirect=${encodeURIComponent(redirectParam)}` : '/signup'}
+                className="font-bold text-[#07131A] hover:underline"
+              >
                 Create an Account
               </Link>
             </p>
           ) : (
-            <div className="space-y-2">
-              <p className="text-xs text-gray-500">
-                Are you a customer?{' '}
-                <Link to="/login" className="font-bold text-[#07131A] hover:underline">
-                  Customer Sign In
-                </Link>
-              </p>
-              <button
-                type="button"
-                onClick={() => {
-                  setDemoAdminMode(true);
-                  navigate('/admin');
-                }}
-                className="text-[11px] text-gray-400 hover:text-gray-600 block mx-auto underline pt-1"
-              >
-                Enable Admin Preview Mode (Local Development)
-              </button>
-            </div>
+            <p className="text-xs text-gray-500">
+              Are you a customer?{' '}
+              <Link to="/login" className="font-bold text-[#07131A] hover:underline">
+                Customer Sign In
+              </Link>
+            </p>
           )}
         </div>
       </div>
@@ -292,7 +285,6 @@ export const LoginPage: React.FC<{ isAdminLogin?: boolean }> = ({ isAdminLogin =
         onClose={() => setShowKeyModal(false)}
         onContinueDemo={() => {
           setShowKeyModal(false);
-          setDemoAdminMode(true);
           navigate(from);
         }}
       />

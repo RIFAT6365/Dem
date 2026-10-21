@@ -1,6 +1,7 @@
 /**
  * Centralized Supabase Auth Context
  * Handles session restoration, role enforcement, profile synchronization, and OTP verification
+ * Strict separation: Customer vs Administrator (Database-backed via public.user_roles)
  */
 
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
@@ -16,7 +17,6 @@ interface AuthContextType {
   isAuthenticated: boolean;
   isLoading: boolean;
   isSupabaseReady: boolean;
-  demoAdminActive: boolean;
 
   // Actions
   signIn: (email: string, password: string) => Promise<void>;
@@ -28,7 +28,6 @@ interface AuthContextType {
   resetPassword: (newPassword: string) => Promise<void>;
   updateProfile: (updates: Partial<UserProfile>) => Promise<void>;
   signOut: () => Promise<void>;
-  setDemoAdminMode: (enabled: boolean) => void;
   refreshProfile: () => Promise<void>;
 }
 
@@ -40,23 +39,6 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   const [role, setRole] = useState<UserRole>('customer');
   const [isLoading, setIsLoading] = useState(true);
   const [isSupabaseReady, setIsSupabaseReady] = useState(false);
-  const [demoAdminActive, setDemoAdminActiveState] = useState(() => {
-    if (typeof window !== 'undefined') {
-      return localStorage.getItem('dem_demo_admin_active') === 'true';
-    }
-    return false;
-  });
-
-  const setDemoAdminMode = (enabled: boolean) => {
-    setDemoAdminActiveState(enabled);
-    if (typeof window !== 'undefined') {
-      if (enabled) {
-        localStorage.setItem('dem_demo_admin_active', 'true');
-      } else {
-        localStorage.removeItem('dem_demo_admin_active');
-      }
-    }
-  };
 
   const loadUserData = async (currentUser: User | null) => {
     if (!currentUser) {
@@ -84,9 +66,11 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
           membershipTier: 'Silver',
         }
       );
+      // Strictly enforce role from trusted public.user_roles table
       setRole(userRole);
     } catch (err) {
       console.warn('Error loading user data from Supabase:', err);
+      setRole('customer');
     }
   };
 
@@ -154,7 +138,6 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     setIsLoading(true);
     try {
       const result = await authService.signUp(params);
-      // If email confirmation is enabled in Supabase, user may not have an active session yet
       const needsEmailVerification = !result.session && Boolean(result.user);
       if (result.user && result.session) {
         await loadUserData(result.user);
@@ -202,14 +185,14 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       setUser(null);
       setProfile(null);
       setRole('customer');
-      setDemoAdminMode(false);
     } finally {
       setIsLoading(false);
     }
   };
 
-  const isAdmin = role === 'admin' || demoAdminActive;
-  const isAuthenticated = Boolean(user) || demoAdminActive;
+  // Strictly database-authorized admin status only
+  const isAdmin = Boolean(user) && role === 'admin';
+  const isAuthenticated = Boolean(user);
 
   return (
     <AuthContext.Provider
@@ -221,7 +204,6 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         isAuthenticated,
         isLoading,
         isSupabaseReady,
-        demoAdminActive,
         signIn,
         signInWithOtp,
         signUp,
@@ -231,7 +213,6 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         resetPassword,
         updateProfile,
         signOut,
-        setDemoAdminMode,
         refreshProfile,
       }}
     >

@@ -150,13 +150,19 @@ export interface Review {
   id: string;
   productId?: string;
   productName?: string;
+  orderId?: string;
+  userId?: string;
   authorName: string;
   authorAvatar?: string;
   rating: number; // 1-5
+  title?: string;
   comment: string;
   date: string;
   isApproved: boolean;
   verifiedPurchase: boolean;
+  adminResponse?: string;
+  adminRespondedAt?: string;
+  createdAt?: string;
 }
 
 export interface Coupon {
@@ -215,10 +221,12 @@ export interface ActivityLog {
 
 export interface NotificationItem {
   id: string;
+  userId?: string;
   title: string;
   message: string;
-  type: 'order' | 'reservation' | 'promo' | 'system';
+  type: 'order' | 'reservation' | 'promo' | 'system' | 'review';
   link?: string;
+  relatedEntityId?: string;
   read: boolean;
   createdAt: string;
 }

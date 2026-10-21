@@ -18,29 +18,34 @@ import {
   ShoppingBag,
   Sparkles,
   Navigation,
+  Lock,
+  LogIn,
+  UserPlus,
 } from 'lucide-react';
 import { useRestaurant } from '../../context/RestaurantContext';
+import { useAuth } from '../../context/AuthContext';
 import { FulfillmentType, PaymentMethod } from '../../types';
 
 export const CheckoutPage: React.FC = () => {
   const { cart, cartTotals, settings, createOrder, showToast, appliedCoupon } = useRestaurant();
+  const { user, profile } = useAuth();
   const navigate = useNavigate();
 
   // Fulfillment
   const [fulfillmentType, setFulfillmentType] = useState<FulfillmentType>('Delivery');
 
-  // Customer Contact Fields
-  const [fullName, setFullName] = useState('Tanvir Rahman');
-  const [phone, setPhone] = useState('+880 1711 223344');
-  const [email, setEmail] = useState('tanvir.rahman@example.com');
+  // Customer Contact Fields (initialized from real authenticated customer profile)
+  const [fullName, setFullName] = useState(profile?.fullName || user?.user_metadata?.full_name || '');
+  const [phone, setPhone] = useState(profile?.phone || user?.user_metadata?.phone || '');
+  const [email, setEmail] = useState(profile?.email || user?.email || '');
 
-  // Customer Delivery Location Fields (As requested by user!)
+  // Customer Delivery Location Fields
   const [city, setCity] = useState('Dhaka');
   const [area, setArea] = useState('Dhanmondi');
-  const [address, setAddress] = useState('House 42, Road 7/A, Dhanmondi R/A');
-  const [flatOrHouse, setFlatOrHouse] = useState('Flat 4B (4th Floor)');
-  const [landmark, setLandmark] = useState('Near Rabindra Sarobar Lake');
-  const [deliveryNotes, setDeliveryNotes] = useState('Please call upon arrival at the security gate.');
+  const [address, setAddress] = useState('');
+  const [flatOrHouse, setFlatOrHouse] = useState('');
+  const [landmark, setLandmark] = useState('');
+  const [deliveryNotes, setDeliveryNotes] = useState('');
   const [selectedMapPin, setSelectedMapPin] = useState('Dhanmondi Lakefront Point');
 
   // Payment method
@@ -62,6 +67,55 @@ export const CheckoutPage: React.FC = () => {
     'Motijheel / Dilkusha',
   ];
 
+  if (!user) {
+    return (
+      <div className="max-w-xl mx-auto py-16 px-4 text-center">
+        <div className="bg-white rounded-3xl border border-[#E9E9E5] p-8 sm:p-10 shadow-sm space-y-6">
+          <div className="w-16 h-16 rounded-2xl bg-amber-50 text-[#E9A817] flex items-center justify-center mx-auto border border-amber-200">
+            <Lock className="w-8 h-8" />
+          </div>
+          <div>
+            <h1 className="font-serif text-2xl sm:text-3xl font-bold text-gray-900">
+              Account Required to Order
+            </h1>
+            <p className="text-xs sm:text-sm text-gray-500 mt-2 leading-relaxed">
+              Guest checkout is disabled for security, live delivery tracking, and order history.
+              Please sign in or create an account to proceed with your order.
+            </p>
+          </div>
+
+          <div className="p-4 rounded-2xl bg-gray-50 border border-gray-200 text-left text-xs space-y-2">
+            <div className="flex justify-between font-bold text-gray-800">
+              <span>Your Cart ({cartTotals.itemCount} items)</span>
+              <span>{settings.currencySymbol} {cartTotals.total}</span>
+            </div>
+            <p className="text-[11px] text-gray-500">
+              Your selected items will remain saved in your cart while you log in.
+            </p>
+          </div>
+
+          <div className="space-y-3 pt-2">
+            <Link
+              to="/login?redirect=/checkout"
+              className="w-full py-3.5 rounded-xl bg-[#F5B51B] hover:bg-[#E9A817] text-[#07131A] font-bold text-xs uppercase tracking-wider flex items-center justify-center gap-2 transition-colors shadow-md shadow-[#F5B51B]/20"
+            >
+              <LogIn className="w-4 h-4" />
+              <span>Sign In to Complete Order</span>
+            </Link>
+
+            <Link
+              to="/signup?redirect=/checkout"
+              className="w-full py-3 rounded-xl bg-[#07131A] hover:bg-black text-[#F5B51B] font-bold text-xs flex items-center justify-center gap-2 transition-colors"
+            >
+              <UserPlus className="w-4 h-4" />
+              <span>Create New Account</span>
+            </Link>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   if (cart.length === 0) {
     return (
       <div className="max-w-xl mx-auto py-24 px-4 text-center">
@@ -80,8 +134,14 @@ export const CheckoutPage: React.FC = () => {
     );
   }
 
-  const handlePlaceOrder = (e: React.FormEvent) => {
+  const handlePlaceOrder = async (e: React.FormEvent) => {
     e.preventDefault();
+
+    if (!user) {
+      showToast('Please sign in to place your order.', 'error');
+      navigate('/login?redirect=/checkout');
+      return;
+    }
 
     if (!fullName.trim() || !phone.trim()) {
       showToast('Please provide your name and phone number.', 'error');
@@ -95,8 +155,8 @@ export const CheckoutPage: React.FC = () => {
 
     setIsSubmitting(true);
 
-    setTimeout(() => {
-      const order = createOrder({
+    try {
+      const order = await createOrder({
         customer: {
           fullName: fullName.trim(),
           phone: phone.trim(),
@@ -139,9 +199,12 @@ export const CheckoutPage: React.FC = () => {
         colors: ['#F5B51B', '#E9A817', '#07131A', '#10B981'],
       });
 
-      setIsSubmitting(false);
       navigate(`/order-confirmation/${order.orderNumber}`);
-    }, 1000);
+    } catch (err: any) {
+      console.error('Order creation error:', err);
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   return (

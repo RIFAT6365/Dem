@@ -15,14 +15,21 @@ import {
   ChefHat,
   MessageSquare,
   Share2,
+  Lock,
+  AlertCircle,
+  CornerDownRight,
+  Loader2,
 } from 'lucide-react';
 import { useRestaurant } from '../../context/RestaurantContext';
+import { useAuth } from '../../context/AuthContext';
+import { reviewService } from '../../services/reviewService';
 import { ProductAddon } from '../../types';
 import { ProductCard } from '../../components/common/ProductCard';
 
 export const ProductDetailPage: React.FC = () => {
   const { slug } = useParams<{ slug: string }>();
-  const { products, categories, settings, addToCart, addReview, showToast } = useRestaurant();
+  const { products, categories, settings, addToCart, addReview, reviews, showToast } = useRestaurant();
+  const { user, profile } = useAuth();
 
   const product = products.find((p) => p.slug === slug || p.id === slug);
 
@@ -33,11 +40,15 @@ export const ProductDetailPage: React.FC = () => {
   const [instructions, setInstructions] = useState('');
   const [isAdded, setIsAdded] = useState(false);
 
-  // Review form state
+  // Review form state & purchase verification
   const [reviewName, setReviewName] = useState('');
+  const [reviewTitle, setReviewTitle] = useState('');
   const [reviewRating, setReviewRating] = useState(5);
   const [reviewComment, setReviewComment] = useState('');
   const [showReviewForm, setShowReviewForm] = useState(false);
+  const [isCheckingEligibility, setIsCheckingEligibility] = useState(false);
+  const [isSubmittingReview, setIsSubmittingReview] = useState(false);
+  const [eligibility, setEligibility] = useState<{ eligible: boolean; orderId?: string; reason?: string } | null>(null);
 
   if (!product) {
     return (
@@ -86,25 +97,64 @@ export const ProductDetailPage: React.FC = () => {
     setTimeout(() => setIsAdded(false), 1500);
   };
 
-  const handleReviewSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!reviewName.trim() || !reviewComment.trim()) {
-      showToast('Please provide your name and comments.', 'error');
+  const handleToggleReviewForm = async () => {
+    if (showReviewForm) {
+      setShowReviewForm(false);
       return;
     }
 
-    addReview({
-      productId: product.id,
-      productName: product.name,
-      authorName: reviewName.trim(),
-      rating: reviewRating,
-      comment: reviewComment.trim(),
-      verifiedPurchase: true,
-    });
+    if (!user) {
+      setShowReviewForm(true);
+      return;
+    }
 
-    setReviewName('');
-    setReviewComment('');
-    setShowReviewForm(false);
+    setIsCheckingEligibility(true);
+    try {
+      const result = await reviewService.checkReviewEligibility(user.id, product.id);
+      setEligibility(result);
+      setReviewName(profile?.fullName || user.user_metadata?.full_name || user.email?.split('@')[0] || '');
+      setShowReviewForm(true);
+    } catch {
+      setEligibility({ eligible: false, reason: 'Could not verify dining order history.' });
+      setShowReviewForm(true);
+    } finally {
+      setIsCheckingEligibility(false);
+    }
+  };
+
+  const handleReviewSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!user) {
+      showToast('You must be signed in to submit a review.', 'error');
+      return;
+    }
+
+    if (!reviewComment.trim()) {
+      showToast('Please provide your review feedback.', 'error');
+      return;
+    }
+
+    setIsSubmittingReview(true);
+    try {
+      await addReview({
+        productId: product.id,
+        productName: product.name,
+        orderId: eligibility?.orderId,
+        authorName: reviewName.trim() || profile?.fullName || 'Customer',
+        rating: reviewRating,
+        title: reviewTitle.trim() || undefined,
+        comment: reviewComment.trim(),
+        verifiedPurchase: true,
+      });
+
+      setReviewTitle('');
+      setReviewComment('');
+      setShowReviewForm(false);
+    } catch {
+      // Toast notification is handled in context
+    } finally {
+      setIsSubmittingReview(false);
+    }
   };
 
   return (
@@ -391,89 +441,215 @@ export const ProductDetailPage: React.FC = () => {
                 Guest Reviews for {product.name}
               </h3>
               <p className="text-xs text-gray-500 mt-1">
-                Rated {product.rating.toFixed(1)} out of 5 based on {product.reviewCount} customer ratings.
+                Rated {product.rating.toFixed(1)} out of 5 based on verified diner ratings.
               </p>
             </div>
             <button
-              onClick={() => setShowReviewForm(!showReviewForm)}
-              className="px-5 py-2.5 rounded-xl bg-[#07131A] text-[#F5B51B] text-xs font-bold hover:bg-black transition-colors self-start sm:self-auto"
+              onClick={handleToggleReviewForm}
+              disabled={isCheckingEligibility}
+              className="px-5 py-2.5 rounded-xl bg-[#07131A] text-[#F5B51B] text-xs font-bold hover:bg-black transition-colors self-start sm:self-auto flex items-center gap-1.5"
             >
-              {showReviewForm ? 'Cancel Review' : '+ Leave a Review'}
+              {isCheckingEligibility ? (
+                <>
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  <span>Checking...</span>
+                </>
+              ) : showReviewForm ? (
+                'Cancel Review'
+              ) : (
+                '+ Leave a Review'
+              )}
             </button>
           </div>
 
-          {/* Leave a review form */}
+          {/* Leave a review form or login gate */}
           {showReviewForm && (
-            <form onSubmit={handleReviewSubmit} className="bg-gray-50 p-6 rounded-2xl border border-gray-200 space-y-4 animate-fadeIn">
-              <h4 className="font-serif text-base font-bold text-gray-900">Write Your Feedback</h4>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-xs font-semibold text-gray-700 mb-1">Your Name</label>
-                  <input
-                    type="text"
-                    value={reviewName}
-                    onChange={(e) => setReviewName(e.target.value)}
-                    placeholder="e.g. Ayesha Siddiqua"
-                    required
-                    className="w-full text-xs p-3 rounded-xl border border-gray-300 bg-white focus:outline-none focus:border-[#F5B51B]"
-                  />
+            <div className="bg-gray-50 p-6 rounded-2xl border border-gray-200 space-y-4 animate-fadeIn">
+              {!user ? (
+                <div className="text-center py-4 space-y-3">
+                  <div className="w-12 h-12 rounded-2xl bg-amber-100 text-[#E9A817] flex items-center justify-center mx-auto">
+                    <Lock className="w-6 h-6" />
+                  </div>
+                  <div>
+                    <h4 className="font-serif text-base font-bold text-gray-900">
+                      Sign In Required to Review
+                    </h4>
+                    <p className="text-xs text-gray-500 mt-1 max-w-md mx-auto">
+                      To preserve authentic dining feedback, reviews can only be submitted by registered customers who have ordered and received this dish.
+                    </p>
+                  </div>
+                  <div className="pt-2 flex justify-center gap-3">
+                    <Link
+                      to={`/login?redirect=${encodeURIComponent(`/menu/${product.slug || product.id}`)}`}
+                      className="px-5 py-2.5 rounded-xl bg-[#F5B51B] text-[#07131A] text-xs font-bold hover:bg-[#E9A817]"
+                    >
+                      Sign In to Review
+                    </Link>
+                  </div>
                 </div>
-                <div>
-                  <label className="block text-xs font-semibold text-gray-700 mb-1">Your Rating</label>
-                  <select
-                    value={reviewRating}
-                    onChange={(e) => setReviewRating(Number(e.target.value))}
-                    className="w-full text-xs p-3 rounded-xl border border-gray-300 bg-white focus:outline-none focus:border-[#F5B51B]"
+              ) : eligibility && !eligibility.eligible ? (
+                <div className="p-4 rounded-xl bg-amber-50 border border-amber-200 text-amber-900 text-xs flex items-start gap-3">
+                  <AlertCircle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
+                  <div>
+                    <h5 className="font-bold text-sm">Verified Purchase Required</h5>
+                    <p className="mt-0.5 text-amber-800 leading-relaxed">
+                      {eligibility.reason ||
+                        'Reviews are only permitted after receiving a completed food delivery order for this dish.'}
+                    </p>
+                    <p className="mt-2 text-[11px] text-amber-700">
+                      Once your order is marked Completed or Delivered, you will be able to share your verified dining experience here.
+                    </p>
+                  </div>
+                </div>
+              ) : (
+                <form onSubmit={handleReviewSubmit} className="space-y-4">
+                  <div className="flex items-center justify-between">
+                    <h4 className="font-serif text-base font-bold text-gray-900 flex items-center gap-2">
+                      <ShieldCheck className="w-4 h-4 text-emerald-600" />
+                      Write Your Verified Review
+                    </h4>
+                    {eligibility?.orderId && (
+                      <span className="text-[10px] font-semibold text-gray-500 bg-gray-200 px-2 py-0.5 rounded">
+                        Verified Order #{eligibility.orderId}
+                      </span>
+                    )}
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-xs font-semibold text-gray-700 mb-1">Your Name</label>
+                      <input
+                        type="text"
+                        value={reviewName}
+                        onChange={(e) => setReviewName(e.target.value)}
+                        placeholder="e.g. Ayesha Siddiqua"
+                        required
+                        className="w-full text-xs p-3 rounded-xl border border-gray-300 bg-white focus:outline-none focus:border-[#F5B51B]"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-semibold text-gray-700 mb-1">Star Rating</label>
+                      <select
+                        value={reviewRating}
+                        onChange={(e) => setReviewRating(Number(e.target.value))}
+                        className="w-full text-xs p-3 rounded-xl border border-gray-300 bg-white focus:outline-none focus:border-[#F5B51B]"
+                      >
+                        <option value={5}>⭐⭐⭐⭐⭐ (5 Stars - Exceptional)</option>
+                        <option value={4}>⭐⭐⭐⭐ (4 Stars - Very Good)</option>
+                        <option value={3}>⭐⭐⭐ (3 Stars - Average)</option>
+                        <option value={2}>⭐⭐ (2 Stars - Below Expectation)</option>
+                        <option value={1}>⭐ (1 Star - Poor)</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-semibold text-gray-700 mb-1">Review Title (Optional)</label>
+                    <input
+                      type="text"
+                      value={reviewTitle}
+                      onChange={(e) => setReviewTitle(e.target.value)}
+                      placeholder="e.g. Perfectly cooked with authentic spices!"
+                      className="w-full text-xs p-3 rounded-xl border border-gray-300 bg-white focus:outline-none focus:border-[#F5B51B]"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-semibold text-gray-700 mb-1">Your Dining Feedback</label>
+                    <textarea
+                      value={reviewComment}
+                      onChange={(e) => setReviewComment(e.target.value)}
+                      placeholder="Share details about flavor, portion size, and presentation..."
+                      rows={3}
+                      required
+                      className="w-full text-xs p-3 rounded-xl border border-gray-300 bg-white focus:outline-none focus:border-[#F5B51B]"
+                    />
+                  </div>
+
+                  <button
+                    type="submit"
+                    disabled={isSubmittingReview}
+                    className="px-6 py-2.5 rounded-xl bg-[#F5B51B] text-[#07131A] text-xs font-bold hover:bg-[#E9A817] disabled:opacity-50 flex items-center gap-2"
                   >
-                    <option value={5}>⭐⭐⭐⭐⭐ (5 Stars - Exceptional)</option>
-                    <option value={4}>⭐⭐⭐⭐ (4 Stars - Very Good)</option>
-                    <option value={3}>⭐⭐⭐ (3 Stars - Average)</option>
-                    <option value={2}>⭐⭐ (2 Stars - Below Expectation)</option>
-                    <option value={1}>⭐ (1 Star - Poor)</option>
-                  </select>
-                </div>
-              </div>
-              <div>
-                <label className="block text-xs font-semibold text-gray-700 mb-1">Review Comments</label>
-                <textarea
-                  value={reviewComment}
-                  onChange={(e) => setReviewComment(e.target.value)}
-                  placeholder="Share details about flavor, portion size, and presentation..."
-                  rows={3}
-                  required
-                  className="w-full text-xs p-3 rounded-xl border border-gray-300 bg-white focus:outline-none focus:border-[#F5B51B]"
-                />
-              </div>
-              <button
-                type="submit"
-                className="px-6 py-2.5 rounded-xl bg-[#F5B51B] text-[#07131A] text-xs font-bold hover:bg-[#E9A817]"
-              >
-                Submit Verified Review
-              </button>
-            </form>
+                    {isSubmittingReview && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+                    <span>{isSubmittingReview ? 'Submitting...' : 'Submit Verified Review'}</span>
+                  </button>
+                </form>
+              )}
+            </div>
           )}
 
-          {/* Sample Product Review list */}
+          {/* Real Customer Reviews List */}
           <div className="space-y-4">
-            <div className="p-4 rounded-xl bg-[#FAFAF8] border border-gray-100 flex items-start gap-4">
-              <div className="w-10 h-10 rounded-full bg-[#07131A] text-[#F5B51B] flex items-center justify-center font-bold text-xs shrink-0">
-                TR
-              </div>
-              <div>
-                <div className="flex items-center gap-2">
-                  <span className="font-bold text-xs text-gray-900">Tanvir Rahman</span>
-                  <div className="flex text-[#F5B51B]">
-                    {[...Array(5)].map((_, i) => (
-                      <Star key={i} className="w-3 h-3 fill-[#F5B51B]" />
-                    ))}
+            {reviews
+              .filter(
+                (r) =>
+                  r.isApproved &&
+                  (r.productId === product.id ||
+                    (r.productName && r.productName.toLowerCase() === product.name.toLowerCase()))
+              )
+              .map((rev) => (
+                <div
+                  key={rev.id}
+                  className="p-4 rounded-xl bg-[#FAFAF8] border border-gray-100 flex items-start gap-4"
+                >
+                  <div className="w-10 h-10 rounded-full bg-[#07131A] text-[#F5B51B] flex items-center justify-center font-bold text-xs shrink-0">
+                    {rev.authorName ? rev.authorName.substring(0, 2).toUpperCase() : 'CU'}
                   </div>
-                  <span className="text-[10px] text-gray-400">2 weeks ago</span>
+                  <div className="flex-grow min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="font-bold text-xs text-gray-900">{rev.authorName}</span>
+                      {rev.verifiedPurchase && (
+                        <span className="inline-flex items-center gap-1 text-[10px] text-emerald-600 font-semibold bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200">
+                          <ShieldCheck className="w-3 h-3" /> Verified Order
+                        </span>
+                      )}
+                      <div className="flex text-[#F5B51B]">
+                        {[...Array(5)].map((_, i) => (
+                          <Star
+                            key={i}
+                            className={`w-3 h-3 ${i < rev.rating ? 'fill-[#F5B51B]' : 'text-gray-200'}`}
+                          />
+                        ))}
+                      </div>
+                      <span className="text-[10px] text-gray-400 ml-auto">{rev.date}</span>
+                    </div>
+
+                    {rev.title && (
+                      <h5 className="font-bold text-xs text-gray-900 mt-1">{rev.title}</h5>
+                    )}
+                    <p className="text-xs text-gray-600 mt-1 leading-relaxed">
+                      {rev.comment}
+                    </p>
+
+                    {/* Official Restaurant Response */}
+                    {rev.adminResponse && (
+                      <div className="mt-3 p-3 rounded-xl bg-amber-50/80 border border-amber-200/70 text-xs text-gray-800">
+                        <div className="flex items-center gap-1.5 font-bold text-amber-900 text-[11px] mb-1">
+                          <CornerDownRight className="w-3.5 h-3.5 text-amber-700" />
+                          <span>Restaurant Response:</span>
+                        </div>
+                        <p className="italic text-gray-700">{rev.adminResponse}</p>
+                      </div>
+                    )}
+                  </div>
                 </div>
-                <p className="text-xs text-gray-600 mt-1 leading-relaxed">
-                  Super fresh and authentic! The flavors and spices were perfectly balanced. Will definitely order this dish again.
+              ))}
+
+            {reviews.filter(
+              (r) =>
+                r.isApproved &&
+                (r.productId === product.id ||
+                  (r.productName && r.productName.toLowerCase() === product.name.toLowerCase()))
+            ).length === 0 && (
+              <div className="py-8 text-center text-gray-400 text-xs">
+                <Star className="w-8 h-8 mx-auto text-gray-300 mb-2" />
+                <p className="font-semibold text-gray-600">No reviews yet for {product.name}</p>
+                <p className="text-[11px] text-gray-400 mt-0.5">
+                  Order this dish to be the first customer to share verified feedback!
                 </p>
               </div>
-            </div>
+            )}
           </div>
         </div>
       </div>

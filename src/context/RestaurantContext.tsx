@@ -34,10 +34,11 @@ import { categoryService } from '../services/categoryService';
 import { orderService, formatOrderFromRow } from '../services/orderService';
 import { reservationService, formatReservationRow } from '../services/reservationService';
 import { couponService } from '../services/couponService';
-import { reviewService } from '../services/reviewService';
+import { reviewService, formatReviewRow } from '../services/reviewService';
 import { galleryService } from '../services/galleryService';
 import { contentService } from '../services/contentService';
 import { activityService } from '../services/activityService';
+import { notificationService } from '../services/notificationService';
 import { authService, UserProfile } from '../services/authService';
 import { useAuth } from './AuthContext';
 
@@ -89,7 +90,7 @@ interface RestaurantContextType {
   removeCouponCode: () => void;
 
   // Order actions
-  createOrder: (orderData: Omit<Order, 'id' | 'orderNumber' | 'createdAt' | 'updatedAt'>) => Order;
+  createOrder: (orderData: Omit<Order, 'id' | 'orderNumber' | 'createdAt' | 'updatedAt'>) => Promise<Order>;
   updateOrderStatus: (orderId: string, status: OrderStatus, riderInfo?: { riderName?: string; riderPhone?: string }) => void;
   cancelOrder: (orderId: string, reason?: string) => void;
   deleteOrder: (orderId: string) => void;
@@ -111,8 +112,9 @@ interface RestaurantContextType {
   deleteReservation: (id: string) => void;
 
   // Review CRUD
-  addReview: (review: Omit<Review, 'id' | 'date' | 'isApproved'>) => void;
-  toggleReviewApproval: (id: string) => void;
+  addReview: (review: Omit<Review, 'id' | 'date' | 'isApproved'> & { title?: string; orderId?: string }) => Promise<Review>;
+  respondToReview: (id: string, response: string) => Promise<void>;
+  toggleReviewApproval: (id: string) => Promise<void>;
   deleteReview: (id: string) => void;
 
   // Coupon CRUD
@@ -130,8 +132,8 @@ interface RestaurantContextType {
 
   // Activity & Notifications
   addActivityLog: (action: string, details: string, category: ActivityLog['category']) => void;
-  markNotificationRead: (id: string) => void;
-  markAllNotificationsRead: () => void;
+  markNotificationRead: (id: string) => Promise<void>;
+  markAllNotificationsRead: () => Promise<void>;
   showToast: (message: string, type?: 'success' | 'error' | 'info') => void;
   removeToast: (id: string) => void;
 
@@ -186,12 +188,12 @@ function saveToStorage<T>(key: string, value: T): void {
 }
 
 export const RestaurantProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
-  const { user, role, demoAdminActive } = useAuth();
+  const { user, role, isAdmin } = useAuth();
   const [products, setProducts] = useState<Product[]>(() => loadFromStorage(STORAGE_KEYS.PRODUCTS, INITIAL_PRODUCTS));
   const [categories, setCategories] = useState<Category[]>(() => loadFromStorage(STORAGE_KEYS.CATEGORIES, INITIAL_CATEGORIES));
-  const [orders, setOrders] = useState<Order[]>(() => loadFromStorage(STORAGE_KEYS.ORDERS, INITIAL_ORDERS));
+  const [orders, setOrders] = useState<Order[]>(() => loadFromStorage(STORAGE_KEYS.ORDERS, []));
   const [reservations, setReservations] = useState<Reservation[]>(() => loadFromStorage(STORAGE_KEYS.RESERVATIONS, INITIAL_RESERVATIONS));
-  const [reviews, setReviews] = useState<Review[]>(() => loadFromStorage(STORAGE_KEYS.REVIEWS, INITIAL_REVIEWS));
+  const [reviews, setReviews] = useState<Review[]>(() => loadFromStorage(STORAGE_KEYS.REVIEWS, []));
   const [coupons, setCoupons] = useState<Coupon[]>(() => loadFromStorage(STORAGE_KEYS.COUPONS, INITIAL_COUPONS));
   const [gallery, setGallery] = useState<GalleryItem[]>(() => loadFromStorage(STORAGE_KEYS.GALLERY, INITIAL_GALLERY));
   const [settings, setSettings] = useState<WebsiteSettings>(() => loadFromStorage(STORAGE_KEYS.SETTINGS, INITIAL_SETTINGS));
@@ -204,26 +206,7 @@ export const RestaurantProvider: React.FC<{ children: ReactNode }> = ({ children
   const [isSyncing, setIsSyncing] = useState<boolean>(false);
   const [lastSyncedAt, setLastSyncedAt] = useState<string | null>(null);
   const [registeredProfiles, setRegisteredProfiles] = useState<UserProfile[]>([]);
-  const [notifications, setNotifications] = useState<NotificationItem[]>(() => loadFromStorage(STORAGE_KEYS.NOTIFICATIONS, [
-    {
-      id: 'notif-1',
-      title: 'Order Status Update',
-      message: 'Order #ORD-1001 is now Ready for delivery/pickup!',
-      type: 'order',
-      link: '/track-order?id=ORD-1001',
-      read: false,
-      createdAt: '2026-10-19T08:50:00Z',
-    },
-    {
-      id: 'notif-2',
-      title: 'Special Feast Discount',
-      message: 'Use code ROYALSPICE to enjoy 15% off orders over ৳ 600.',
-      type: 'promo',
-      link: '/offers',
-      read: false,
-      createdAt: '2026-10-19T08:00:00Z',
-    },
-  ]));
+  const [notifications, setNotifications] = useState<NotificationItem[]>(() => loadFromStorage(STORAGE_KEYS.NOTIFICATIONS, []));
 
   // Sync state to LocalStorage
   useEffect(() => saveToStorage(STORAGE_KEYS.PRODUCTS, products), [products]);
@@ -290,24 +273,30 @@ export const RestaurantProvider: React.FC<{ children: ReactNode }> = ({ children
         navs,
         acts,
         profs,
+        notifs,
       ] = await Promise.allSettled([
         productService.fetchProducts(),
         categoryService.fetchCategories(),
-        orderService.fetchOrders(),
+        isAdmin
+          ? orderService.fetchOrders()
+          : user?.id
+          ? orderService.fetchCustomerOrders(user.id)
+          : Promise.resolve([]),
         reservationService.fetchReservations(),
-        reviewService.fetchReviews(false),
+        reviewService.fetchReviews(isAdmin),
         couponService.fetchCoupons(),
         galleryService.fetchGallery(),
         contentService.fetchSettings(),
         contentService.fetchNavigation(),
         activityService.fetchActivityLogs(),
-        authService.getAllProfiles(),
+        isAdmin ? authService.getAllProfiles() : Promise.resolve([]),
+        notificationService.fetchUserNotifications(user?.id, isAdmin),
       ]);
 
-      if (prods.status === 'fulfilled' && prods.value && prods.value.length > 0) {
+      if (prods.status === 'fulfilled' && prods.value !== null) {
         setProducts(prods.value);
       }
-      if (cats.status === 'fulfilled' && cats.value && cats.value.length > 0) {
+      if (cats.status === 'fulfilled' && cats.value !== null) {
         setCategories(cats.value);
       }
       if (ords.status === 'fulfilled' && ords.value !== null) {
@@ -316,26 +305,29 @@ export const RestaurantProvider: React.FC<{ children: ReactNode }> = ({ children
       if (resvs.status === 'fulfilled' && resvs.value !== null) {
         setReservations(resvs.value);
       }
-      if (revs.status === 'fulfilled' && revs.value !== null && revs.value.length > 0) {
+      if (revs.status === 'fulfilled' && revs.value !== null) {
         setReviews(revs.value);
       }
-      if (cpns.status === 'fulfilled' && cpns.value && cpns.value.length > 0) {
+      if (cpns.status === 'fulfilled' && cpns.value !== null) {
         setCoupons(cpns.value);
       }
-      if (gall.status === 'fulfilled' && gall.value && gall.value.length > 0) {
+      if (gall.status === 'fulfilled' && gall.value !== null) {
         setGallery(gall.value);
       }
       if (sttngs.status === 'fulfilled' && sttngs.value) {
         setSettings(sttngs.value);
       }
-      if (navs.status === 'fulfilled' && navs.value && navs.value.length > 0) {
+      if (navs.status === 'fulfilled' && navs.value !== null) {
         setNavLinks(navs.value);
       }
-      if (acts.status === 'fulfilled' && acts.value && acts.value.length > 0) {
+      if (acts.status === 'fulfilled' && acts.value !== null) {
         setActivityLogs(acts.value);
       }
-      if (profs.status === 'fulfilled' && profs.value) {
+      if (profs.status === 'fulfilled' && profs.value !== null) {
         setRegisteredProfiles(profs.value);
+      }
+      if (notifs.status === 'fulfilled' && notifs.value !== null) {
+        setNotifications(notifs.value);
       }
 
       setLastSyncedAt(new Date().toLocaleTimeString());
@@ -349,7 +341,7 @@ export const RestaurantProvider: React.FC<{ children: ReactNode }> = ({ children
   // Re-sync when auth state or admin role activates
   useEffect(() => {
     refreshFromSupabase();
-  }, [user?.id, role, demoAdminActive]);
+  }, [user?.id, role, isAdmin]);
 
   // Real-time Supabase Database Subscriptions
   useEffect(() => {
@@ -364,14 +356,10 @@ export const RestaurantProvider: React.FC<{ children: ReactNode }> = ({ children
           if (payload.eventType === 'INSERT') {
             const newOrder = formatOrderFromRow(payload.new);
             setOrders((prev) => [newOrder, ...prev.filter((o) => o.id !== newOrder.id)]);
-            pushNotification(
-              '🔔 New Live Order!',
-              `Order #${newOrder.orderNumber} placed for ৳${newOrder.total} by ${newOrder.customer?.fullName || 'Customer'}.`,
-              'order',
-              '/admin/orders'
-            );
-            playNotificationSound();
-            showToast(`New Live Order #${newOrder.orderNumber} received!`, 'success');
+            if (isAdmin) {
+              playNotificationSound();
+              showToast(`New Live Order #${newOrder.orderNumber} received!`, 'success');
+            }
           } else if (payload.eventType === 'UPDATE') {
             const updated = formatOrderFromRow(payload.new);
             setOrders((prev) => prev.map((o) => (o.id === updated.id ? updated : o)));
@@ -387,17 +375,72 @@ export const RestaurantProvider: React.FC<{ children: ReactNode }> = ({ children
           if (payload.eventType === 'INSERT') {
             const newRes = formatReservationRow(payload.new);
             setReservations((prev) => [newRes, ...prev.filter((r) => r.id !== newRes.id)]);
-            pushNotification(
-              '📅 New Table Booking!',
-              `${newRes.customerName} reserved for ${newRes.guests} guests on ${newRes.date} at ${newRes.timeSlot}.`,
-              'reservation',
-              '/admin/reservations'
-            );
-            playNotificationSound();
-            showToast(`New Table Reservation #${newRes.referenceNumber}!`, 'info');
+            if (isAdmin) {
+              playNotificationSound();
+              showToast(`New Table Reservation #${newRes.referenceNumber}!`, 'info');
+            }
           } else if (payload.eventType === 'UPDATE') {
             const updated = formatReservationRow(payload.new);
             setReservations((prev) => prev.map((r) => (r.id === updated.id ? updated : r)));
+          }
+        }
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'reviews' },
+        (payload) => {
+          if (payload.eventType === 'INSERT') {
+            const newRev = formatReviewRow(payload.new);
+            setReviews((prev) => [newRev, ...prev.filter((r) => r.id !== newRev.id)]);
+          } else if (payload.eventType === 'UPDATE') {
+            const updated = formatReviewRow(payload.new);
+            setReviews((prev) => prev.map((r) => (r.id === updated.id ? updated : r)));
+          } else if (payload.eventType === 'DELETE') {
+            setReviews((prev) => prev.filter((r) => r.id !== payload.old.id));
+          }
+        }
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'products' },
+        (payload) => {
+          if (payload.eventType === 'INSERT' || payload.eventType === 'UPDATE') {
+            productService.fetchProducts().then((data) => {
+              if (data) setProducts(data);
+            });
+          } else if (payload.eventType === 'DELETE') {
+            setProducts((prev) => prev.filter((p) => p.id !== payload.old.id));
+          }
+        }
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'notifications' },
+        (payload) => {
+          if (payload.eventType === 'INSERT') {
+            const row = payload.new;
+            if (isAdmin || !row.user_id || row.user_id === user?.id) {
+              const newNotif: NotificationItem = {
+                id: String(row.id),
+                userId: row.user_id || undefined,
+                title: row.title,
+                message: row.message,
+                type: row.type || 'system',
+                link: row.link || undefined,
+                relatedEntityId: row.related_entity_id || undefined,
+                read: Boolean(row.is_read),
+                createdAt: row.created_at || new Date().toISOString(),
+              };
+              setNotifications((prev) => [newNotif, ...prev.filter((n) => n.id !== newNotif.id)]);
+              playNotificationSound();
+            }
+          } else if (payload.eventType === 'UPDATE') {
+            const row = payload.new;
+            setNotifications((prev) =>
+              prev.map((n) =>
+                n.id === String(row.id) ? { ...n, read: Boolean(row.is_read) } : n
+              )
+            );
           }
         }
       )
@@ -406,7 +449,7 @@ export const RestaurantProvider: React.FC<{ children: ReactNode }> = ({ children
     return () => {
       supabase.removeChannel(channel);
     };
-  }, []);
+  }, [user?.id, isAdmin]);
 
   const checkBackendConnection = async (): Promise<ConnectionStatus> => {
     const status = await testSupabaseConnection();
@@ -446,14 +489,16 @@ export const RestaurantProvider: React.FC<{ children: ReactNode }> = ({ children
     setNotifications((prev) => [newNotif, ...prev]);
   };
 
-  const markNotificationRead = (id: string) => {
+  const markNotificationRead = async (id: string) => {
     setNotifications((prev) =>
       prev.map((n) => (n.id === id ? { ...n, read: true } : n))
     );
+    await notificationService.markAsRead(id);
   };
 
-  const markAllNotificationsRead = () => {
+  const markAllNotificationsRead = async () => {
     setNotifications((prev) => prev.map((n) => ({ ...n, read: true })));
+    await notificationService.markAllAsRead(user?.id);
     showToast('All notifications marked as read', 'info');
   };
 
@@ -629,48 +674,42 @@ export const RestaurantProvider: React.FC<{ children: ReactNode }> = ({ children
   }, [cart, appliedCoupon, settings]);
 
   // Order management
-  const createOrder = (orderData: Omit<Order, 'id' | 'orderNumber' | 'createdAt' | 'updatedAt'>): Order => {
-    const count = orders.length + 1001;
-    const orderNumber = `DEM-${count}`;
-    const newOrder: Order = {
-      ...orderData,
-      id: `ord-${Date.now()}`,
-      orderNumber,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    };
-
-    setOrders((prev) => [newOrder, ...prev]);
-
-    // Persist to Supabase
-    orderService.createOrder(orderData, user?.id);
-
-    // Update coupon usage if used
-    if (newOrder.couponCode) {
-      setCoupons((prev) =>
-        prev.map((c) =>
-          c.code.toUpperCase() === newOrder.couponCode?.toUpperCase()
-            ? { ...c, usedCount: c.usedCount + 1 }
-            : c
-        )
-      );
+  const createOrder = async (
+    orderData: Omit<Order, 'id' | 'orderNumber' | 'createdAt' | 'updatedAt'>
+  ): Promise<Order> => {
+    if (!user?.id) {
+      showToast('Authentication required: You must have an account and be signed in to place an order.', 'error');
+      throw new Error('Authentication required: Please sign in or register before ordering.');
     }
 
-    addActivityLog(
-      'Order Placed',
-      `Order #${orderNumber} placed by ${newOrder.customer.fullName} (${settings.currencySymbol} ${newOrder.total})`,
-      'order'
-    );
+    try {
+      const createdOrder = await orderService.createOrder(orderData, user.id);
+      setOrders((prev) => [createdOrder, ...prev.filter((o) => o.id !== createdOrder.id)]);
 
-    pushNotification(
-      'New Order Received',
-      `Order #${orderNumber} has been placed for ${settings.currencySymbol} ${newOrder.total}.`,
-      'order',
-      `/account/orders/${newOrder.id}`
-    );
+      // Update coupon usage if used
+      if (createdOrder.couponCode) {
+        setCoupons((prev) =>
+          prev.map((c) =>
+            c.code.toUpperCase() === createdOrder.couponCode?.toUpperCase()
+              ? { ...c, usedCount: c.usedCount + 1 }
+              : c
+          )
+        );
+      }
 
-    clearCart();
-    return newOrder;
+      addActivityLog(
+        'Order Placed',
+        `Order #${createdOrder.orderNumber} placed by ${createdOrder.customer.fullName} (${settings.currencySymbol} ${createdOrder.total})`,
+        'order'
+      );
+
+      clearCart();
+      showToast(`Order #${createdOrder.orderNumber} placed successfully!`, 'success');
+      return createdOrder;
+    } catch (err: any) {
+      showToast(err?.message || 'Failed to place order in database', 'error');
+      throw err;
+    }
   };
 
   const updateOrderStatus = (
@@ -861,34 +900,66 @@ export const RestaurantProvider: React.FC<{ children: ReactNode }> = ({ children
   };
 
   // Review CRUD
-  const addReview = (reviewData: Omit<Review, 'id' | 'date' | 'isApproved'>) => {
-    const today = new Date().toISOString().split('T')[0];
-    const newReview: Review = {
-      ...reviewData,
-      id: `rev-${Date.now()}`,
-      date: today,
-      isApproved: true,
-    };
-    setReviews((prev) => [newReview, ...prev]);
-    reviewService.createReview(reviewData, user?.id);
-    addActivityLog('New Customer Review', `${newReview.authorName} left a ${newReview.rating}★ rating`, 'review');
-    showToast('Thank you! Your dining review has been posted.');
+  const addReview = async (
+    reviewData: Omit<Review, 'id' | 'date' | 'isApproved'> & { title?: string; orderId?: string }
+  ): Promise<Review> => {
+    if (!user?.id) {
+      showToast('You must be signed in to submit a review.', 'error');
+      throw new Error('You must be signed in to submit a review.');
+    }
+
+    try {
+      const created = await reviewService.createReview(reviewData, user.id);
+      setReviews((prev) => [created, ...prev.filter((r) => r.id !== created.id)]);
+      addActivityLog('New Customer Review', `${created.authorName} left a ${created.rating}★ rating`, 'review');
+      showToast('Thank you! Your verified dining review has been posted.');
+      return created;
+    } catch (err: any) {
+      showToast(err?.message || 'Failed to submit review.', 'error');
+      throw err;
+    }
   };
 
-  const toggleReviewApproval = (id: string) => {
+  const respondToReview = async (id: string, responseText: string): Promise<void> => {
+    try {
+      await reviewService.respondToReview(id, responseText, user?.id);
+      setReviews((prev) =>
+        prev.map((r) =>
+          r.id === id
+            ? { ...r, adminResponse: responseText.trim(), adminRespondedAt: new Date().toISOString() }
+            : r
+        )
+      );
+      showToast('Response successfully published to review!');
+    } catch (err: any) {
+      showToast(err?.message || 'Failed to post reply.', 'error');
+      throw err;
+    }
+  };
+
+  const toggleReviewApproval = async (id: string): Promise<void> => {
     const rev = reviews.find((r) => r.id === id);
     if (!rev) return;
-    setReviews((prev) =>
-      prev.map((r) => (r.id === id ? { ...r, isApproved: !r.isApproved } : r))
-    );
-    reviewService.toggleApproval(id, rev.isApproved);
-    showToast(`Review visibility updated`);
+    try {
+      await reviewService.toggleApproval(id, rev.isApproved);
+      setReviews((prev) =>
+        prev.map((r) => (r.id === id ? { ...r, isApproved: !r.isApproved } : r))
+      );
+      showToast(`Review visibility updated to ${!rev.isApproved ? 'Visible' : 'Hidden'}`);
+    } catch (err: any) {
+      showToast('Failed to update review visibility', 'error');
+      throw err;
+    }
   };
 
-  const deleteReview = (id: string) => {
+  const deleteReview = async (id: string) => {
     setReviews((prev) => prev.filter((r) => r.id !== id));
-    reviewService.deleteReview(id);
-    showToast('Review deleted', 'info');
+    try {
+      await reviewService.deleteReview(id);
+      showToast('Review deleted', 'info');
+    } catch (err: any) {
+      showToast('Failed to delete review', 'error');
+    }
   };
 
   // Coupon CRUD
@@ -1106,6 +1177,7 @@ export const RestaurantProvider: React.FC<{ children: ReactNode }> = ({ children
         updateReservationStatus,
         deleteReservation,
         addReview,
+        respondToReview,
         toggleReviewApproval,
         deleteReview,
         addCoupon,

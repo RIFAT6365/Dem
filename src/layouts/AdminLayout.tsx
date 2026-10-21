@@ -50,7 +50,7 @@ export const AdminLayout: React.FC = () => {
     playNotificationSound,
     showToast,
   } = useRestaurant();
-  const { user, profile, signOut, demoAdminActive, setDemoAdminMode } = useAuth();
+  const { user, profile, signOut, isAdmin } = useAuth();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [resetConfirmOpen, setResetConfirmOpen] = useState(false);
   const [notifOpen, setNotifOpen] = useState(false);
@@ -220,7 +220,7 @@ export const AdminLayout: React.FC = () => {
                   {profile?.fullName || user?.email?.split('@')[0] || 'Administrator'}
                 </span>
                 <span className="block text-[10px] text-gray-500">
-                  {demoAdminActive ? 'Demo Admin Mode' : user?.email || 'Authorized Staff'}
+                  {user?.email || 'Administrator (Verified)'}
                 </span>
               </div>
               <button

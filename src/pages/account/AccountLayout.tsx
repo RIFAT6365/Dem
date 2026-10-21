@@ -59,11 +59,6 @@ export const AccountLayout: React.FC = () => {
               <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-[#FFF8E7] text-[#07131A] border border-[#F5B51B]/40">
                 {profile?.membershipTier || 'Gold'} Member
               </span>
-              {isAdmin && (
-                <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-purple-100 text-purple-800 border border-purple-200">
-                  Admin
-                </span>
-              )}
             </div>
             <p className="text-xs text-gray-500 mt-0.5">{displayEmail}</p>
             <span className="text-[11px] text-gray-400 mt-1 block">
@@ -79,16 +74,6 @@ export const AccountLayout: React.FC = () => {
           >
             Order New Meal
           </Link>
-
-          {isAdmin && (
-            <Link
-              to="/admin"
-              className="flex-grow md:flex-grow-0 px-4 py-2.5 rounded-xl bg-[#07131A] text-[#F5B51B] text-xs font-bold hover:bg-black text-center flex items-center justify-center gap-1.5 transition-colors"
-            >
-              <ShieldCheck className="w-3.5 h-3.5 text-[#F5B51B]" />
-              <span>Admin Portal</span>
-            </Link>
-          )}
 
           <button
             onClick={handleSignOut}

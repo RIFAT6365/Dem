@@ -86,7 +86,36 @@ export const productService = {
         .single();
 
       if (error) {
-        console.warn('Failed to insert product into Supabase:', error.message);
+        console.error('Failed to insert product into Supabase:', error.message);
+        throw new Error(`Product creation failed: ${error.message}`);
+      }
+
+      if (data) {
+        return {
+          id: data.id,
+          name: data.name,
+          slug: data.slug,
+          shortDescription: data.short_description || '',
+          fullDescription: data.full_description || '',
+          categoryId: data.category_id || '',
+          images: Array.isArray(data.images) ? data.images : [],
+          price: Number(data.price),
+          salePrice: data.sale_price ? Number(data.sale_price) : undefined,
+          isAvailable: Boolean(data.is_available),
+          isFeatured: Boolean(data.is_featured),
+          isBestseller: Boolean(data.is_bestseller),
+          ingredients: Array.isArray(data.ingredients) ? data.ingredients : [],
+          dietaryLabels: Array.isArray(data.dietary_labels) ? data.dietary_labels : [],
+          spiceLevel: data.spice_level || 'None',
+          prepTimeMinutes: data.prep_time_minutes || 20,
+          addons: Array.isArray(data.addons) ? data.addons : [],
+          rating: Number(data.rating || 5.0),
+          reviewCount: Number(data.review_count || 0),
+          seoTitle: data.seo_title,
+          seoDescription: data.seo_description,
+          createdAt: data.created_at,
+          updatedAt: data.updated_at,
+        };
       }
     }
 
@@ -127,7 +156,8 @@ export const productService = {
 
     const { error } = await supabase.from('products').update(payload).eq('id', id);
     if (error) {
-      console.warn('Failed to update product in Supabase:', error.message);
+      console.error('Failed to update product in Supabase:', error.message);
+      throw new Error(`Product update failed: ${error.message}`);
     }
   },
 
@@ -135,7 +165,8 @@ export const productService = {
     if (!isSupabaseConfigured()) return;
     const { error } = await supabase.from('products').delete().eq('id', id);
     if (error) {
-      console.warn('Failed to delete product in Supabase:', error.message);
+      console.error('Failed to delete product in Supabase:', error.message);
+      throw new Error(`Product deletion failed: ${error.message}`);
     }
   },
 };

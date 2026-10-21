@@ -1,14 +1,28 @@
 import React, { useState } from 'react';
-import { Star, MessageSquare, Plus, CheckCircle2, AlertCircle, Sparkles, Filter } from 'lucide-react';
+import { Link } from 'react-router-dom';
+import {
+  Star,
+  MessageSquare,
+  Plus,
+  CheckCircle2,
+  AlertCircle,
+  Sparkles,
+  Filter,
+  ShieldCheck,
+  CornerDownRight,
+  Lock,
+} from 'lucide-react';
 import { useRestaurant } from '../../context/RestaurantContext';
+import { useAuth } from '../../context/AuthContext';
 
 export const ReviewsPage: React.FC = () => {
   const { reviews, addReview, showToast, settings } = useRestaurant();
+  const { user, profile } = useAuth();
   const [filterRating, setFilterRating] = useState<number | 'all'>('all');
   const [isModalOpen, setIsModalOpen] = useState(false);
 
   // Form state
-  const [authorName, setAuthorName] = useState('');
+  const [authorName, setAuthorName] = useState(profile?.fullName || user?.user_metadata?.full_name || '');
   const [rating, setRating] = useState(5);
   const [comment, setComment] = useState('');
 
@@ -23,6 +37,10 @@ export const ReviewsPage: React.FC = () => {
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    if (!user) {
+      showToast('You must be signed in to submit a review.', 'error');
+      return;
+    }
     if (!authorName.trim() || !comment.trim()) {
       showToast('Please provide your name and review details.', 'error');
       return;
@@ -36,7 +54,6 @@ export const ReviewsPage: React.FC = () => {
       authorAvatar: `https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=150&q=80`,
     });
 
-    setAuthorName('');
     setComment('');
     setRating(5);
     setIsModalOpen(false);
@@ -56,17 +73,6 @@ export const ReviewsPage: React.FC = () => {
         <p className="text-xs sm:text-sm text-[#686B70] mt-2">
           Read genuine feedback from guests who dined with us or ordered takeaway delivery.
         </p>
-      </div>
-
-      {/* Demo Notice */}
-      <div className="p-4 rounded-2xl bg-amber-50 border border-amber-200 text-amber-900 text-xs flex items-center gap-3 max-w-3xl mx-auto">
-        <AlertCircle className="w-5 h-5 text-amber-600 shrink-0" />
-        <div>
-          <span className="font-bold">Demo Notice: </span>
-          <span>
-            These testimonials and reviews are part of the demo dataset. You can submit new reviews below, and they will persist in your local storage.
-          </span>
-        </div>
       </div>
 
       {/* Rating Breakdown Summary Card */}
@@ -183,6 +189,17 @@ export const ReviewsPage: React.FC = () => {
               <p className="text-xs text-gray-600 leading-relaxed italic">
                 “{rev.comment}”
               </p>
+
+              {/* Official Restaurant Response */}
+              {rev.adminResponse && (
+                <div className="mt-3 p-3 rounded-xl bg-amber-50/80 border border-amber-200/70 text-xs text-gray-800">
+                  <div className="flex items-center gap-1.5 font-bold text-amber-900 text-[11px] mb-1">
+                    <CornerDownRight className="w-3.5 h-3.5 text-amber-700" />
+                    <span>Restaurant Response:</span>
+                  </div>
+                  <p className="italic text-gray-700">{rev.adminResponse}</p>
+                </div>
+              )}
             </div>
 
             <div className="pt-4 mt-4 border-t border-gray-100 flex items-center justify-between text-[11px] text-gray-500">
@@ -206,72 +223,103 @@ export const ReviewsPage: React.FC = () => {
               Your feedback helps us continuously elevate our royal flavors and services.
             </p>
 
-            <form onSubmit={handleSubmit} className="space-y-4">
-              <div>
-                <label className="block text-xs font-semibold text-gray-700 mb-1">Your Full Name</label>
-                <input
-                  type="text"
-                  value={authorName}
-                  onChange={(e) => setAuthorName(e.target.value)}
-                  placeholder="e.g. Nusrat Jahan"
-                  required
-                  className="w-full text-xs p-3 rounded-xl border border-gray-300 focus:outline-none focus:border-[#F5B51B]"
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-semibold text-gray-700 mb-1">Your Rating</label>
-                <div className="flex items-center gap-2">
-                  {[1, 2, 3, 4, 5].map((star) => (
-                    <button
-                      key={star}
-                      type="button"
-                      onClick={() => setRating(star)}
-                      className="p-1 hover:scale-110 transition-transform"
-                    >
-                      <Star
-                        className={`w-7 h-7 ${
-                          star <= rating
-                            ? 'fill-[#F5B51B] text-[#F5B51B]'
-                            : 'text-gray-300'
-                        }`}
-                      />
-                    </button>
-                  ))}
-                  <span className="text-xs font-bold text-gray-700 ml-2">
-                    {rating} out of 5 Stars
-                  </span>
+            {!user ? (
+              <div className="text-center py-6 space-y-4">
+                <div className="w-12 h-12 rounded-2xl bg-amber-100 text-[#E9A817] flex items-center justify-center mx-auto">
+                  <Lock className="w-6 h-6" />
+                </div>
+                <div>
+                  <h4 className="font-serif text-base font-bold text-gray-900">
+                    Sign In Required to Leave a Review
+                  </h4>
+                  <p className="text-xs text-gray-500 mt-1 max-w-sm mx-auto">
+                    To prevent fake reviews, only verified customers with registered accounts can publish reviews.
+                  </p>
+                </div>
+                <div className="pt-2 flex justify-center gap-3">
+                  <button
+                    type="button"
+                    onClick={() => setIsModalOpen(false)}
+                    className="px-4 py-2.5 rounded-xl border border-gray-200 text-xs font-semibold text-gray-600 hover:bg-gray-50"
+                  >
+                    Cancel
+                  </button>
+                  <Link
+                    to="/login?redirect=/reviews"
+                    className="px-5 py-2.5 rounded-xl bg-[#F5B51B] text-[#07131A] text-xs font-bold hover:bg-[#E9A817]"
+                  >
+                    Sign In
+                  </Link>
                 </div>
               </div>
+            ) : (
+              <form onSubmit={handleSubmit} className="space-y-4">
+                <div>
+                  <label className="block text-xs font-semibold text-gray-700 mb-1">Your Full Name</label>
+                  <input
+                    type="text"
+                    value={authorName}
+                    onChange={(e) => setAuthorName(e.target.value)}
+                    placeholder="e.g. Nusrat Jahan"
+                    required
+                    className="w-full text-xs p-3 rounded-xl border border-gray-300 focus:outline-none focus:border-[#F5B51B]"
+                  />
+                </div>
 
-              <div>
-                <label className="block text-xs font-semibold text-gray-700 mb-1">Your Review</label>
-                <textarea
-                  value={comment}
-                  onChange={(e) => setComment(e.target.value)}
-                  placeholder="Tell us what you liked about the food, delivery speed, or table atmosphere..."
-                  rows={4}
-                  required
-                  className="w-full text-xs p-3 rounded-xl border border-gray-300 focus:outline-none focus:border-[#F5B51B]"
-                />
-              </div>
+                <div>
+                  <label className="block text-xs font-semibold text-gray-700 mb-1">Your Rating</label>
+                  <div className="flex items-center gap-2">
+                    {[1, 2, 3, 4, 5].map((star) => (
+                      <button
+                        key={star}
+                        type="button"
+                        onClick={() => setRating(star)}
+                        className="p-1 hover:scale-110 transition-transform"
+                      >
+                        <Star
+                          className={`w-7 h-7 ${
+                            star <= rating
+                              ? 'fill-[#F5B51B] text-[#F5B51B]'
+                              : 'text-gray-300'
+                          }`}
+                        />
+                      </button>
+                    ))}
+                    <span className="text-xs font-bold text-gray-700 ml-2">
+                      {rating} out of 5 Stars
+                    </span>
+                  </div>
+                </div>
 
-              <div className="pt-2 flex items-center justify-end gap-3">
-                <button
-                  type="button"
-                  onClick={() => setIsModalOpen(false)}
-                  className="px-4 py-2.5 rounded-xl border border-gray-200 text-xs font-semibold text-gray-600 hover:bg-gray-50"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  className="px-6 py-2.5 rounded-xl bg-[#F5B51B] hover:bg-[#E9A817] text-[#07131A] text-xs font-bold transition-all shadow-md"
-                >
-                  Post Review
-                </button>
-              </div>
-            </form>
+                <div>
+                  <label className="block text-xs font-semibold text-gray-700 mb-1">Your Review</label>
+                  <textarea
+                    value={comment}
+                    onChange={(e) => setComment(e.target.value)}
+                    placeholder="Tell us what you liked about the food, delivery speed, or table atmosphere..."
+                    rows={4}
+                    required
+                    className="w-full text-xs p-3 rounded-xl border border-gray-300 focus:outline-none focus:border-[#F5B51B]"
+                  />
+                </div>
+
+                <div className="pt-2 flex items-center justify-end gap-3">
+                  <button
+                    type="button"
+                    onClick={() => setIsModalOpen(false)}
+                    className="px-4 py-2.5 rounded-xl border border-gray-200 text-xs font-semibold text-gray-600 hover:bg-gray-50"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    className="px-6 py-2.5 rounded-xl bg-[#F5B51B] hover:bg-[#E9A817] text-[#07131A] text-xs font-bold transition-all shadow-md"
+                  >
+                    Post Review
+                  </button>
+                </div>
+              </form>
+            )}
           </div>
         </div>
       )}

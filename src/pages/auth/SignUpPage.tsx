@@ -5,7 +5,7 @@
  */
 
 import React, { useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 import { isSupabaseConfigured } from '../../lib/supabase';
 import { SupabaseKeyModal } from '../../components/common/SupabaseKeyModal';
@@ -24,8 +24,12 @@ import {
 } from 'lucide-react';
 
 export const SignUpPage: React.FC = () => {
-  const { signUp, isSupabaseReady, setDemoAdminMode } = useAuth();
+  const { signUp, isSupabaseReady } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
+
+  const searchParams = new URLSearchParams(location.search);
+  const redirectParam = searchParams.get('redirect');
 
   const [fullName, setFullName] = useState('');
   const [email, setEmail] = useState('');
@@ -82,7 +86,7 @@ export const SignUpPage: React.FC = () => {
       if (needsEmailVerification) {
         navigate(`/verify-email?email=${encodeURIComponent(email.trim())}`);
       } else {
-        navigate('/account');
+        navigate(redirectParam || '/account', { replace: true });
       }
     } catch (err: any) {
       setErrorMsg(err?.message || 'Failed to create account. Please try again.');
@@ -284,7 +288,10 @@ export const SignUpPage: React.FC = () => {
         <div className="pt-4 border-t border-gray-100 text-center">
           <p className="text-xs text-gray-500">
             Already have an account?{' '}
-            <Link to="/login" className="font-bold text-[#07131A] hover:underline">
+            <Link
+              to={redirectParam ? `/login?redirect=${encodeURIComponent(redirectParam)}` : '/login'}
+              className="font-bold text-[#07131A] hover:underline"
+            >
               Sign In
             </Link>
           </p>
