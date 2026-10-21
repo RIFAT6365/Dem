@@ -273,6 +273,62 @@ export const AdminSettingsPage: React.FC = () => {
             </Link>
           </div>
         </div>
+
+        {/* Section 6: Supabase PostgreSQL & Auth Backend */}
+        <div className="bg-white p-6 sm:p-8 rounded-2xl border border-emerald-200 shadow-xs space-y-5">
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 border-b border-gray-100 pb-3">
+            <h2 className="font-sans not-italic text-base font-bold text-gray-900 flex items-center gap-2">
+              <span className="w-5 h-5 rounded-full bg-emerald-600 text-white text-[10px] font-bold flex items-center justify-center">6</span>
+              <span>Supabase Cloud Database & Authentication (iqnhcovwjwjelinlhkmj)</span>
+            </h2>
+            <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-emerald-50 text-emerald-800 border border-emerald-200 flex items-center gap-1.5 self-start sm:self-auto">
+              <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+              <span>PostgreSQL & Auth Connected</span>
+            </span>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
+            <div className="space-y-1">
+              <label className="font-bold text-gray-700 block uppercase tracking-wider text-[10px]">
+                Supabase Project URL
+              </label>
+              <input
+                type="text"
+                disabled
+                value="https://iqnhcovwjwjelinlhkmj.supabase.co"
+                className="w-full text-xs p-3 rounded-xl border border-gray-200 bg-gray-50 text-gray-700 font-mono"
+              />
+            </div>
+            <div className="space-y-1">
+              <label className="font-bold text-gray-700 block uppercase tracking-wider text-[10px]">
+                Target Project ID
+              </label>
+              <input
+                type="text"
+                disabled
+                value="iqnhcovwjwjelinlhkmj"
+                className="w-full text-xs p-3 rounded-xl border border-gray-200 bg-gray-50 text-gray-700 font-mono"
+              />
+            </div>
+          </div>
+
+          <div className="p-4 rounded-xl bg-gray-50 border border-gray-200 space-y-3">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-bold text-gray-800">First Administrator Provisioning</span>
+              <span className="text-[10px] text-gray-500">Run in Supabase SQL Editor</span>
+            </div>
+            <pre className="p-3 rounded-lg bg-[#07131A] text-emerald-400 text-[11px] font-mono overflow-x-auto select-all">
+{`INSERT INTO public.user_roles (user_id, role)
+SELECT id, 'admin'
+FROM auth.users
+WHERE email = 'parsonalrifat@gmail.com'
+ON CONFLICT (user_id, role) DO NOTHING;`}
+            </pre>
+            <p className="text-[11px] text-gray-500 leading-relaxed">
+              When an account signs up through the customer portal, it is assigned the secure <code>customer</code> role. Execute the query above in your Supabase SQL Editor to elevate your email to full Administrator.
+            </p>
+          </div>
+        </div>
       </form>
     </div>
   );

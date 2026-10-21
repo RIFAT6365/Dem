@@ -12,11 +12,14 @@ import {
   Clock,
   Sparkles,
   ExternalLink,
+  User,
 } from 'lucide-react';
 import { useRestaurant } from '../../context/RestaurantContext';
+import { useAuth } from '../../context/AuthContext';
 
 export const Navbar: React.FC = () => {
   const { settings, navLinks, cartTotals, notifications, markNotificationRead, markAllNotificationsRead } = useRestaurant();
+  const { user, profile, isAuthenticated } = useAuth();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [notifDropdownOpen, setNotifDropdownOpen] = useState(false);
   const notifRef = useRef<HTMLDivElement>(null);
@@ -197,6 +200,18 @@ export const Navbar: React.FC = () => {
               )}
             </Link>
 
+            {/* Customer Account Button */}
+            <Link
+              to={isAuthenticated ? '/account' : '/login'}
+              className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold text-gray-300 hover:text-white hover:bg-gray-800/60 transition-colors border border-gray-700/60"
+              title={isAuthenticated ? 'My Account' : 'Customer Sign In'}
+            >
+              <User className="w-4 h-4 text-[#F5B51B]" />
+              <span className="hidden xl:inline">
+                {isAuthenticated ? profile?.fullName?.split(' ')[0] || 'Account' : 'Sign In'}
+              </span>
+            </Link>
+
             {/* Order Now CTA Button */}
             <Link
               to="/order"
@@ -253,6 +268,14 @@ export const Navbar: React.FC = () => {
 
             <div className="pt-4 border-t border-[#223544] flex flex-col gap-3">
               <Link
+                to={isAuthenticated ? '/account' : '/login'}
+                onClick={() => setMobileMenuOpen(false)}
+                className="w-full py-2.5 rounded-lg bg-gray-800 text-white text-center font-medium text-xs flex items-center justify-center gap-2 border border-gray-700"
+              >
+                <User className="w-4 h-4 text-[#F5B51B]" />
+                <span>{isAuthenticated ? `My Account (${profile?.fullName || 'Customer'})` : 'Customer Sign In / Register'}</span>
+              </Link>
+              <Link
                 to="/order"
                 onClick={() => setMobileMenuOpen(false)}
                 className="w-full py-3 rounded-lg bg-[#F5B51B] text-[#07131A] text-center font-bold text-sm flex items-center justify-center gap-2"
@@ -263,7 +286,7 @@ export const Navbar: React.FC = () => {
               <Link
                 to="/admin"
                 onClick={() => setMobileMenuOpen(false)}
-                className="w-full py-2.5 rounded-lg bg-gray-800 text-gray-200 text-center font-medium text-xs flex items-center justify-center gap-2 border border-gray-700"
+                className="w-full py-2.5 rounded-lg bg-[#07131A] text-gray-200 text-center font-medium text-xs flex items-center justify-center gap-2 border border-[#F5B51B]/30"
               >
                 <ShieldCheck className="w-4 h-4 text-[#F5B51B]" />
                 <span>Open Restaurant Admin Dashboard</span>

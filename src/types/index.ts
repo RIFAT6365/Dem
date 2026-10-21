@@ -136,6 +136,7 @@ export interface Customer {
   name: string;
   phone: string;
   email: string;
+  city?: string;
   area: string;
   address: string;
   totalOrders: number;

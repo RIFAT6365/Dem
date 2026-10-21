@@ -5,11 +5,17 @@
 
 import React from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { AuthProvider } from './context/AuthContext';
 import { RestaurantProvider } from './context/RestaurantContext';
 
 // Layouts
 import { PublicLayout } from './layouts/PublicLayout';
 import { AdminLayout } from './layouts/AdminLayout';
+import { AccountLayout } from './pages/account/AccountLayout';
+
+// Guards
+import { AdminRoute } from './components/auth/AdminRoute';
+import { CustomerRoute } from './components/auth/CustomerRoute';
 
 // Public Pages
 import { HomePage } from './pages/public/HomePage';
@@ -30,8 +36,23 @@ import { OffersPage } from './pages/public/OffersPage';
 import { FAQPage } from './pages/public/FAQPage';
 import { PrivacyPolicyPage } from './pages/public/PrivacyPolicyPage';
 import { TermsPage } from './pages/public/TermsPage';
-import { AccountPage } from './pages/public/AccountPage';
 import { NotFoundPage } from './pages/public/NotFoundPage';
+
+// Authentication Pages
+import { LoginPage } from './pages/auth/LoginPage';
+import { SignUpPage } from './pages/auth/SignUpPage';
+import { VerifyEmailPage } from './pages/auth/VerifyEmailPage';
+import { ForgotPasswordPage } from './pages/auth/ForgotPasswordPage';
+import { ResetPasswordPage } from './pages/auth/ResetPasswordPage';
+
+// Customer Account Pages
+import { AccountOverviewPage } from './pages/account/AccountOverviewPage';
+import { AccountProfilePage } from './pages/account/AccountProfilePage';
+import { AccountAddressesPage } from './pages/account/AccountAddressesPage';
+import { AccountOrdersPage } from './pages/account/AccountOrdersPage';
+import { AccountOrderDetailPage } from './pages/account/AccountOrderDetailPage';
+import { AccountReservationsPage } from './pages/account/AccountReservationsPage';
+import { AccountSecurityPage } from './pages/account/AccountSecurityPage';
 
 // Admin Pages
 import { AdminDashboardPage } from './pages/admin/AdminDashboardPage';
@@ -52,54 +73,91 @@ import { AdminGoogleDrivePage } from './pages/admin/AdminGoogleDrivePage';
 
 export default function App() {
   return (
-    <RestaurantProvider>
-      <BrowserRouter>
-        <Routes>
-          {/* Public Routes with Public Layout */}
-          <Route element={<PublicLayout />}>
-            <Route path="/" element={<HomePage />} />
-            <Route path="/menu" element={<MenuPage />} />
-            <Route path="/menu/category/:slug" element={<CategoryPage />} />
-            <Route path="/product/:slug" element={<ProductDetailPage />} />
-            <Route path="/about" element={<AboutPage />} />
-            <Route path="/gallery" element={<GalleryPage />} />
-            <Route path="/reviews" element={<ReviewsPage />} />
-            <Route path="/contact" element={<ContactPage />} />
-            <Route path="/reservations" element={<ReservationsPage />} />
-            <Route path="/order" element={<OnlineOrderPage />} />
-            <Route path="/cart" element={<CartPage />} />
-            <Route path="/checkout" element={<CheckoutPage />} />
-            <Route path="/order-confirmation/:orderId" element={<OrderConfirmationPage />} />
-            <Route path="/track-order" element={<TrackOrderPage />} />
-            <Route path="/offers" element={<OffersPage />} />
-            <Route path="/faq" element={<FAQPage />} />
-            <Route path="/privacy-policy" element={<PrivacyPolicyPage />} />
-            <Route path="/terms" element={<TermsPage />} />
-            <Route path="/account" element={<AccountPage />} />
-            <Route path="*" element={<NotFoundPage />} />
-          </Route>
+    <AuthProvider>
+      <RestaurantProvider>
+        <BrowserRouter>
+          <Routes>
+            {/* Public Routes with Public Layout */}
+            <Route element={<PublicLayout />}>
+              <Route path="/" element={<HomePage />} />
+              <Route path="/menu" element={<MenuPage />} />
+              <Route path="/menu/category/:slug" element={<CategoryPage />} />
+              <Route path="/product/:slug" element={<ProductDetailPage />} />
+              <Route path="/about" element={<AboutPage />} />
+              <Route path="/gallery" element={<GalleryPage />} />
+              <Route path="/reviews" element={<ReviewsPage />} />
+              <Route path="/contact" element={<ContactPage />} />
+              <Route path="/reservations" element={<ReservationsPage />} />
+              <Route path="/order" element={<OnlineOrderPage />} />
+              <Route path="/cart" element={<CartPage />} />
+              <Route path="/checkout" element={<CheckoutPage />} />
+              <Route path="/order-confirmation/:orderId" element={<OrderConfirmationPage />} />
+              <Route path="/track-order" element={<TrackOrderPage />} />
+              <Route path="/offers" element={<OffersPage />} />
+              <Route path="/faq" element={<FAQPage />} />
+              <Route path="/privacy-policy" element={<PrivacyPolicyPage />} />
+              <Route path="/terms" element={<TermsPage />} />
 
-          {/* Admin Routes with Admin Layout */}
-          <Route path="/admin" element={<AdminLayout />}>
-            <Route index element={<AdminDashboardPage />} />
-            <Route path="orders" element={<AdminOrdersPage />} />
-            <Route path="products" element={<AdminProductsPage />} />
-            <Route path="products/new" element={<AdminProductFormPage />} />
-            <Route path="products/:id/edit" element={<AdminProductFormPage />} />
-            <Route path="categories" element={<AdminCategoriesPage />} />
-            <Route path="reservations" element={<AdminReservationsPage />} />
-            <Route path="customers" element={<AdminCustomersPage />} />
-            <Route path="reviews" element={<AdminReviewsPage />} />
-            <Route path="offers" element={<AdminOffersPage />} />
-            <Route path="content" element={<AdminContentPage />} />
-            <Route path="gallery" element={<AdminGalleryPage />} />
-            <Route path="settings" element={<AdminSettingsPage />} />
-            <Route path="drive" element={<AdminGoogleDrivePage />} />
-            <Route path="navigation" element={<AdminNavigationPage />} />
-            <Route path="activity" element={<AdminActivityPage />} />
-          </Route>
-        </Routes>
-      </BrowserRouter>
-    </RestaurantProvider>
+              {/* Authentication Routes */}
+              <Route path="/login" element={<LoginPage />} />
+              <Route path="/signup" element={<SignUpPage />} />
+              <Route path="/verify-email" element={<VerifyEmailPage />} />
+              <Route path="/forgot-password" element={<ForgotPasswordPage />} />
+              <Route path="/reset-password" element={<ResetPasswordPage />} />
+
+              {/* Protected Customer Account Hub */}
+              <Route
+                path="/account"
+                element={
+                  <CustomerRoute>
+                    <AccountLayout />
+                  </CustomerRoute>
+                }
+              >
+                <Route index element={<AccountOverviewPage />} />
+                <Route path="profile" element={<AccountProfilePage />} />
+                <Route path="addresses" element={<AccountAddressesPage />} />
+                <Route path="orders" element={<AccountOrdersPage />} />
+                <Route path="orders/:id" element={<AccountOrderDetailPage />} />
+                <Route path="reservations" element={<AccountReservationsPage />} />
+                <Route path="security" element={<AccountSecurityPage />} />
+              </Route>
+
+              <Route path="*" element={<NotFoundPage />} />
+            </Route>
+
+            {/* Admin Login Route (Outside AdminRoute guard) */}
+            <Route path="/admin/login" element={<LoginPage isAdminLogin />} />
+
+            {/* Admin Routes with Admin Layout and AdminRoute Guard */}
+            <Route
+              path="/admin"
+              element={
+                <AdminRoute>
+                  <AdminLayout />
+                </AdminRoute>
+              }
+            >
+              <Route index element={<AdminDashboardPage />} />
+              <Route path="orders" element={<AdminOrdersPage />} />
+              <Route path="products" element={<AdminProductsPage />} />
+              <Route path="products/new" element={<AdminProductFormPage />} />
+              <Route path="products/:id/edit" element={<AdminProductFormPage />} />
+              <Route path="categories" element={<AdminCategoriesPage />} />
+              <Route path="reservations" element={<AdminReservationsPage />} />
+              <Route path="customers" element={<AdminCustomersPage />} />
+              <Route path="reviews" element={<AdminReviewsPage />} />
+              <Route path="offers" element={<AdminOffersPage />} />
+              <Route path="content" element={<AdminContentPage />} />
+              <Route path="gallery" element={<AdminGalleryPage />} />
+              <Route path="settings" element={<AdminSettingsPage />} />
+              <Route path="drive" element={<AdminGoogleDrivePage />} />
+              <Route path="navigation" element={<AdminNavigationPage />} />
+              <Route path="activity" element={<AdminActivityPage />} />
+            </Route>
+          </Routes>
+        </BrowserRouter>
+      </RestaurantProvider>
+    </AuthProvider>
   );
 }

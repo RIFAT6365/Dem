@@ -24,19 +24,47 @@ import {
   CheckCircle2,
   AlertTriangle,
   HardDrive,
+  LogOut,
+  Volume2,
+  Trash2,
+  CheckCheck,
+  Database,
 } from 'lucide-react';
 import { useRestaurant } from '../context/RestaurantContext';
+import { useAuth } from '../context/AuthContext';
 import { ToastContainer } from '../components/common/ToastContainer';
 
 export const AdminLayout: React.FC = () => {
-  const { settings, orders, resetDemoData, notifications } = useRestaurant();
+  const {
+    settings,
+    orders,
+    resetDemoData,
+    notifications,
+    markNotificationRead,
+    markAllNotificationsRead,
+    deleteNotification,
+    clearAllNotifications,
+    refreshFromSupabase,
+    isSyncing,
+    isBackendConnected,
+    playNotificationSound,
+    showToast,
+  } = useRestaurant();
+  const { user, profile, signOut, demoAdminActive, setDemoAdminMode } = useAuth();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [resetConfirmOpen, setResetConfirmOpen] = useState(false);
+  const [notifOpen, setNotifOpen] = useState(false);
+  const [notifFilter, setNotifFilter] = useState<'all' | 'order' | 'reservation' | 'promo'>('all');
   const navigate = useNavigate();
   const location = useLocation();
 
   const pendingOrdersCount = orders.filter((o) => o.orderStatus === 'Pending' || o.orderStatus === 'Preparing').length;
   const unreadNotifs = notifications.filter((n) => !n.read).length;
+
+  const filteredNotifs = notifications.filter((n) => {
+    if (notifFilter === 'all') return true;
+    return n.type === notifFilter;
+  });
 
   const navItems = [
     { label: 'Dashboard', path: '/admin', icon: LayoutDashboard },
@@ -182,15 +210,29 @@ export const AdminLayout: React.FC = () => {
               <span className="hidden md:inline">View Website</span>
             </Link>
 
-            {/* Profile Avatar */}
-            <div className="flex items-center gap-2.5 pl-3 border-l border-gray-200">
+            {/* Profile Avatar & Sign Out */}
+            <div className="flex items-center gap-3 pl-3 border-l border-gray-200">
               <div className="w-8 h-8 rounded-full bg-gradient-to-tr from-[#F5B51B] to-[#E9A817] text-[#07131A] flex items-center justify-center font-bold text-xs shadow-xs">
-                RS
+                {user?.email?.slice(0, 2).toUpperCase() || 'AD'}
               </div>
               <div className="hidden md:block text-left">
-                <span className="block text-xs font-bold text-gray-800 leading-tight">Admin Manager</span>
-                <span className="block text-[10px] text-gray-500">Dhaka HQ</span>
+                <span className="block text-xs font-bold text-gray-800 leading-tight">
+                  {profile?.fullName || user?.email?.split('@')[0] || 'Administrator'}
+                </span>
+                <span className="block text-[10px] text-gray-500">
+                  {demoAdminActive ? 'Demo Admin Mode' : user?.email || 'Authorized Staff'}
+                </span>
               </div>
+              <button
+                onClick={async () => {
+                  await signOut();
+                  navigate('/admin/login');
+                }}
+                className="p-1.5 rounded-lg text-gray-400 hover:text-red-600 hover:bg-red-50 transition-colors"
+                title="Sign Out of Admin Portal"
+              >
+                <LogOut className="w-4 h-4" />
+              </button>
             </div>
           </div>
         </header>

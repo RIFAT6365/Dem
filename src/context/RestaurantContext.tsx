@@ -28,6 +28,18 @@ import {
   INITIAL_NAV_LINKS,
   INITIAL_ACTIVITY_LOGS,
 } from '../data/initialData';
+import { isSupabaseConfigured, testSupabaseConnection, ConnectionStatus, supabase } from '../lib/supabase';
+import { productService } from '../services/productService';
+import { categoryService } from '../services/categoryService';
+import { orderService, formatOrderFromRow } from '../services/orderService';
+import { reservationService, formatReservationRow } from '../services/reservationService';
+import { couponService } from '../services/couponService';
+import { reviewService } from '../services/reviewService';
+import { galleryService } from '../services/galleryService';
+import { contentService } from '../services/contentService';
+import { activityService } from '../services/activityService';
+import { authService, UserProfile } from '../services/authService';
+import { useAuth } from './AuthContext';
 
 interface ToastInfo {
   id: string;
@@ -51,6 +63,21 @@ interface RestaurantContextType {
   cart: CartItem[];
   appliedCoupon: Coupon | null;
   toasts: ToastInfo[];
+  supabaseStatus: ConnectionStatus | null;
+  isBackendConnected: boolean;
+  isSyncing: boolean;
+  lastSyncedAt: string | null;
+  refreshFromSupabase: () => Promise<void>;
+  registeredProfiles: UserProfile[];
+  playNotificationSound: () => void;
+  pushNotification: (
+    title: string,
+    message: string,
+    type: 'order' | 'reservation' | 'promo' | 'system',
+    link?: string
+  ) => void;
+  deleteNotification: (id: string) => void;
+  clearAllNotifications: () => void;
 
   // Cart actions
   addToCart: (product: Product, quantity?: number, selectedOptions?: { addonId: string; name: string; price: number }[], specialInstructions?: string) => void;
@@ -111,6 +138,7 @@ interface RestaurantContextType {
   // System
   resetDemoData: () => void;
   restoreRestaurantBackup: (backupData: any) => { success: boolean; message: string };
+  checkBackendConnection: () => Promise<ConnectionStatus>;
   cartTotals: {
     itemCount: number;
     subtotal: number;
@@ -158,6 +186,7 @@ function saveToStorage<T>(key: string, value: T): void {
 }
 
 export const RestaurantProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
+  const { user, role, demoAdminActive } = useAuth();
   const [products, setProducts] = useState<Product[]>(() => loadFromStorage(STORAGE_KEYS.PRODUCTS, INITIAL_PRODUCTS));
   const [categories, setCategories] = useState<Category[]>(() => loadFromStorage(STORAGE_KEYS.CATEGORIES, INITIAL_CATEGORIES));
   const [orders, setOrders] = useState<Order[]>(() => loadFromStorage(STORAGE_KEYS.ORDERS, INITIAL_ORDERS));
@@ -171,6 +200,10 @@ export const RestaurantProvider: React.FC<{ children: ReactNode }> = ({ children
   const [cart, setCart] = useState<CartItem[]>(() => loadFromStorage(STORAGE_KEYS.CART, []));
   const [appliedCoupon, setAppliedCoupon] = useState<Coupon | null>(null);
   const [toasts, setToasts] = useState<ToastInfo[]>([]);
+  const [supabaseStatus, setSupabaseStatus] = useState<ConnectionStatus | null>(null);
+  const [isSyncing, setIsSyncing] = useState<boolean>(false);
+  const [lastSyncedAt, setLastSyncedAt] = useState<string | null>(null);
+  const [registeredProfiles, setRegisteredProfiles] = useState<UserProfile[]>([]);
   const [notifications, setNotifications] = useState<NotificationItem[]>(() => loadFromStorage(STORAGE_KEYS.NOTIFICATIONS, [
     {
       id: 'notif-1',
@@ -206,6 +239,181 @@ export const RestaurantProvider: React.FC<{ children: ReactNode }> = ({ children
   useEffect(() => saveToStorage(STORAGE_KEYS.CART, cart), [cart]);
   useEffect(() => saveToStorage(STORAGE_KEYS.NOTIFICATIONS, notifications), [notifications]);
 
+  // Gentle synthesized audio chime for live order/reservation alerts
+  const playNotificationSound = () => {
+    try {
+      const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+      if (!AudioCtx) return;
+      const ctx = new AudioCtx();
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+
+      osc.type = 'triangle';
+      osc.frequency.setValueAtTime(587.33, ctx.currentTime); // D5
+      osc.frequency.exponentialRampToValueAtTime(880, ctx.currentTime + 0.15); // A5
+
+      gain.gain.setValueAtTime(0.2, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.4);
+
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start();
+      osc.stop(ctx.currentTime + 0.4);
+    } catch {
+      // Audio autoplay policy might restrict if no prior user gesture
+    }
+  };
+
+  // Comprehensive Supabase Backend Sync
+  const refreshFromSupabase = async () => {
+    if (!isSupabaseConfigured()) return;
+    setIsSyncing(true);
+
+    try {
+      const status = await testSupabaseConnection();
+      setSupabaseStatus(status);
+
+      if (!status.ok) {
+        setIsSyncing(false);
+        return;
+      }
+
+      const [
+        prods,
+        cats,
+        ords,
+        resvs,
+        revs,
+        cpns,
+        gall,
+        sttngs,
+        navs,
+        acts,
+        profs,
+      ] = await Promise.allSettled([
+        productService.fetchProducts(),
+        categoryService.fetchCategories(),
+        orderService.fetchOrders(),
+        reservationService.fetchReservations(),
+        reviewService.fetchReviews(false),
+        couponService.fetchCoupons(),
+        galleryService.fetchGallery(),
+        contentService.fetchSettings(),
+        contentService.fetchNavigation(),
+        activityService.fetchActivityLogs(),
+        authService.getAllProfiles(),
+      ]);
+
+      if (prods.status === 'fulfilled' && prods.value && prods.value.length > 0) {
+        setProducts(prods.value);
+      }
+      if (cats.status === 'fulfilled' && cats.value && cats.value.length > 0) {
+        setCategories(cats.value);
+      }
+      if (ords.status === 'fulfilled' && ords.value !== null) {
+        setOrders(ords.value);
+      }
+      if (resvs.status === 'fulfilled' && resvs.value !== null) {
+        setReservations(resvs.value);
+      }
+      if (revs.status === 'fulfilled' && revs.value !== null && revs.value.length > 0) {
+        setReviews(revs.value);
+      }
+      if (cpns.status === 'fulfilled' && cpns.value && cpns.value.length > 0) {
+        setCoupons(cpns.value);
+      }
+      if (gall.status === 'fulfilled' && gall.value && gall.value.length > 0) {
+        setGallery(gall.value);
+      }
+      if (sttngs.status === 'fulfilled' && sttngs.value) {
+        setSettings(sttngs.value);
+      }
+      if (navs.status === 'fulfilled' && navs.value && navs.value.length > 0) {
+        setNavLinks(navs.value);
+      }
+      if (acts.status === 'fulfilled' && acts.value && acts.value.length > 0) {
+        setActivityLogs(acts.value);
+      }
+      if (profs.status === 'fulfilled' && profs.value) {
+        setRegisteredProfiles(profs.value);
+      }
+
+      setLastSyncedAt(new Date().toLocaleTimeString());
+    } catch (err) {
+      console.warn('Error during Supabase sync:', err);
+    } finally {
+      setIsSyncing(false);
+    }
+  };
+
+  // Re-sync when auth state or admin role activates
+  useEffect(() => {
+    refreshFromSupabase();
+  }, [user?.id, role, demoAdminActive]);
+
+  // Real-time Supabase Database Subscriptions
+  useEffect(() => {
+    if (!isSupabaseConfigured()) return;
+
+    const channel = supabase
+      .channel('dem_restaurant_realtime_channel')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'orders' },
+        (payload) => {
+          if (payload.eventType === 'INSERT') {
+            const newOrder = formatOrderFromRow(payload.new);
+            setOrders((prev) => [newOrder, ...prev.filter((o) => o.id !== newOrder.id)]);
+            pushNotification(
+              '🔔 New Live Order!',
+              `Order #${newOrder.orderNumber} placed for ৳${newOrder.total} by ${newOrder.customer?.fullName || 'Customer'}.`,
+              'order',
+              '/admin/orders'
+            );
+            playNotificationSound();
+            showToast(`New Live Order #${newOrder.orderNumber} received!`, 'success');
+          } else if (payload.eventType === 'UPDATE') {
+            const updated = formatOrderFromRow(payload.new);
+            setOrders((prev) => prev.map((o) => (o.id === updated.id ? updated : o)));
+          } else if (payload.eventType === 'DELETE') {
+            setOrders((prev) => prev.filter((o) => o.id !== payload.old.id));
+          }
+        }
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'reservations' },
+        (payload) => {
+          if (payload.eventType === 'INSERT') {
+            const newRes = formatReservationRow(payload.new);
+            setReservations((prev) => [newRes, ...prev.filter((r) => r.id !== newRes.id)]);
+            pushNotification(
+              '📅 New Table Booking!',
+              `${newRes.customerName} reserved for ${newRes.guests} guests on ${newRes.date} at ${newRes.timeSlot}.`,
+              'reservation',
+              '/admin/reservations'
+            );
+            playNotificationSound();
+            showToast(`New Table Reservation #${newRes.referenceNumber}!`, 'info');
+          } else if (payload.eventType === 'UPDATE') {
+            const updated = formatReservationRow(payload.new);
+            setReservations((prev) => prev.map((r) => (r.id === updated.id ? updated : r)));
+          }
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, []);
+
+  const checkBackendConnection = async (): Promise<ConnectionStatus> => {
+    const status = await testSupabaseConnection();
+    setSupabaseStatus(status);
+    return status;
+  };
+
   // Toast manager
   const showToast = (message: string, type: 'success' | 'error' | 'info' = 'success') => {
     const id = `toast-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
@@ -219,22 +427,15 @@ export const RestaurantProvider: React.FC<{ children: ReactNode }> = ({ children
     setToasts((prev) => prev.filter((t) => t.id !== id));
   };
 
-  // Activity Logger
-  const addActivityLog = (action: string, details: string, category: ActivityLog['category']) => {
-    const newLog: ActivityLog = {
-      id: `act-${Date.now()}`,
-      action,
-      details,
-      category,
-      timestamp: new Date().toISOString(),
-    };
-    setActivityLogs((prev) => [newLog, ...prev.slice(0, 49)]); // keep recent 50
-  };
-
-  // Notification creator
-  const pushNotification = (title: string, message: string, type: NotificationItem['type'], link?: string) => {
+  // Notification helper
+  const pushNotification = (
+    title: string,
+    message: string,
+    type: 'order' | 'reservation' | 'promo' | 'system',
+    link?: string
+  ) => {
     const newNotif: NotificationItem = {
-      id: `notif-${Date.now()}`,
+      id: `notif-${Date.now()}-${Math.random().toString(36).substring(2, 5)}`,
       title,
       message,
       type,
@@ -246,49 +447,80 @@ export const RestaurantProvider: React.FC<{ children: ReactNode }> = ({ children
   };
 
   const markNotificationRead = (id: string) => {
-    setNotifications((prev) => prev.map((n) => (n.id === id ? { ...n, read: true } : n)));
+    setNotifications((prev) =>
+      prev.map((n) => (n.id === id ? { ...n, read: true } : n))
+    );
   };
 
   const markAllNotificationsRead = () => {
     setNotifications((prev) => prev.map((n) => ({ ...n, read: true })));
+    showToast('All notifications marked as read', 'info');
   };
 
-  // Cart operations
+  const deleteNotification = (id: string) => {
+    setNotifications((prev) => prev.filter((n) => n.id !== id));
+  };
+
+  const clearAllNotifications = () => {
+    setNotifications([]);
+    showToast('All notifications cleared', 'info');
+  };
+
+  // Activity Log
+  const addActivityLog = (
+    action: string,
+    details: string,
+    category: ActivityLog['category']
+  ) => {
+    const newLog: ActivityLog = {
+      id: `act-${Date.now()}`,
+      action,
+      details,
+      category,
+      timestamp: new Date().toISOString(),
+    };
+    setActivityLogs((prev) => [newLog, ...prev.slice(0, 99)]);
+    activityService.logAction(action, details, category, user?.id);
+  };
+
+  // Cart actions
   const addToCart = (
     product: Product,
     quantity = 1,
     selectedOptions: { addonId: string; name: string; price: number }[] = [],
     specialInstructions = ''
   ) => {
-    const effectiveBasePrice = product.salePrice ?? product.price;
-    const optionsTotal = selectedOptions.reduce((acc, opt) => acc + opt.price, 0);
-    const unitPrice = effectiveBasePrice + optionsTotal;
+    const optionsPrice = selectedOptions.reduce((acc, opt) => acc + opt.price, 0);
+    const unitPrice = (product.salePrice ?? product.price) + optionsPrice;
 
     const optionsKey = selectedOptions
-      .map((o) => o.addonId)
+      .map((o) => `${o.addonId}:${o.price}`)
       .sort()
-      .join('-');
-    const cartItemId = `${product.id}_${optionsKey}_${specialInstructions ? encodeURIComponent(specialInstructions) : 'none'}`;
+      .join('|');
+    const cartItemId = `${product.id}_${optionsKey}_${specialInstructions.trim()}`;
 
     setCart((prevCart) => {
       const existing = prevCart.find((item) => item.id === cartItemId);
       if (existing) {
         return prevCart.map((item) =>
-          item.id === cartItemId ? { ...item, quantity: item.quantity + quantity } : item
+          item.id === cartItemId
+            ? { ...item, quantity: item.quantity + quantity }
+            : item
         );
+      } else {
+        const newItem: CartItem = {
+          id: cartItemId,
+          productId: product.id,
+          productName: product.name,
+          productImage: product.images[0] || 'https://images.unsplash.com/photo-1546069901-ba9599a7e63c?auto=format&fit=crop&w=600&q=80',
+          basePrice: product.salePrice ?? product.price,
+          price: unitPrice,
+          quantity,
+          selectedOptions,
+          specialInstructions: specialInstructions.trim() || undefined,
+        };
+        return [...prevCart, newItem];
       }
-      const newItem: CartItem = {
-        id: cartItemId,
-        productId: product.id,
-        productName: product.name,
-        productImage: product.images[0] || 'https://images.unsplash.com/photo-1546833999-b9f581a1996d?auto=format&fit=crop&w=600&q=80',
-        price: unitPrice,
-        basePrice: effectiveBasePrice,
-        quantity,
-        selectedOptions,
-        specialInstructions,
-      };
-      return [...prevCart, newItem];
     });
 
     showToast(`Added ${quantity}x "${product.name}" to cart!`);
@@ -399,7 +631,7 @@ export const RestaurantProvider: React.FC<{ children: ReactNode }> = ({ children
   // Order management
   const createOrder = (orderData: Omit<Order, 'id' | 'orderNumber' | 'createdAt' | 'updatedAt'>): Order => {
     const count = orders.length + 1001;
-    const orderNumber = `ORD-${count}`;
+    const orderNumber = `DEM-${count}`;
     const newOrder: Order = {
       ...orderData,
       id: `ord-${Date.now()}`,
@@ -409,6 +641,9 @@ export const RestaurantProvider: React.FC<{ children: ReactNode }> = ({ children
     };
 
     setOrders((prev) => [newOrder, ...prev]);
+
+    // Persist to Supabase
+    orderService.createOrder(orderData, user?.id);
 
     // Update coupon usage if used
     if (newOrder.couponCode) {
@@ -431,7 +666,7 @@ export const RestaurantProvider: React.FC<{ children: ReactNode }> = ({ children
       'New Order Received',
       `Order #${orderNumber} has been placed for ${settings.currencySymbol} ${newOrder.total}.`,
       'order',
-      `/track-order?id=${orderNumber}`
+      `/account/orders/${newOrder.id}`
     );
 
     clearCart();
@@ -460,6 +695,9 @@ export const RestaurantProvider: React.FC<{ children: ReactNode }> = ({ children
       })
     );
 
+    // Sync to Supabase
+    orderService.updateOrderStatus(orderId, status, riderInfo);
+
     addActivityLog('Order Status Updated', `Order #${orderNum || orderId} changed to "${status}"`, 'order');
 
     pushNotification(
@@ -473,105 +711,92 @@ export const RestaurantProvider: React.FC<{ children: ReactNode }> = ({ children
   };
 
   const cancelOrder = (orderId: string, reason = 'Cancelled by administrator') => {
-    let orderNum = '';
-    setOrders((prev) =>
-      prev.map((order) => {
-        if (order.id === orderId || order.orderNumber === orderId) {
-          orderNum = order.orderNumber;
-          return {
-            ...order,
-            orderStatus: 'Canceled',
-            updatedAt: new Date().toISOString(),
-          };
-        }
-        return order;
-      })
-    );
-    addActivityLog('Order Canceled', `Order #${orderNum || orderId} was cancelled (${reason})`, 'order');
-    showToast(`Order #${orderNum || orderId} cancelled`, 'info');
+    updateOrderStatus(orderId, 'Canceled');
+    showToast(`Order has been marked as Canceled.`, 'info');
   };
 
   const deleteOrder = (orderId: string) => {
     setOrders((prev) => prev.filter((o) => o.id !== orderId));
-    addActivityLog('Order Deleted', `Order ID ${orderId} was removed from records`, 'order');
-    showToast('Order record deleted', 'info');
+    orderService.deleteOrder(orderId);
+    showToast('Order record removed.', 'info');
   };
 
   // Product CRUD
   const addProduct = (prodData: Omit<Product, 'id' | 'createdAt' | 'updatedAt'>): Product => {
+    const newId = `prod-${Date.now()}`;
     const newProduct: Product = {
       ...prodData,
-      id: `prod-${Date.now()}`,
+      id: newId,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     };
     setProducts((prev) => [newProduct, ...prev]);
-    addActivityLog('Product Created', `Added new menu item "${newProduct.name}"`, 'product');
-    showToast(`Product "${newProduct.name}" created successfully!`);
+    productService.createProduct(prodData);
+    addActivityLog('Added Product', `Created new menu item: "${newProduct.name}"`, 'product');
+    showToast(`Product "${newProduct.name}" created!`);
     return newProduct;
   };
 
-  const updateProduct = (id: string, updated: Partial<Product>) => {
+  const updateProduct = (id: string, updates: Partial<Product>) => {
     setProducts((prev) =>
-      prev.map((prod) =>
-        prod.id === id ? { ...prod, ...updated, updatedAt: new Date().toISOString() } : prod
-      )
+      prev.map((p) => (p.id === id ? { ...p, ...updates, updatedAt: new Date().toISOString() } : p))
     );
-    addActivityLog('Product Updated', `Updated product ID: ${id}`, 'product');
+    productService.updateProduct(id, updates);
+    addActivityLog('Updated Product', `Updated details for product ID #${id}`, 'product');
     showToast('Product updated successfully!');
   };
 
   const deleteProduct = (id: string) => {
-    const target = products.find((p) => p.id === id);
+    const item = products.find((p) => p.id === id);
     setProducts((prev) => prev.filter((p) => p.id !== id));
-    addActivityLog('Product Deleted', `Deleted product "${target?.name || id}"`, 'product');
-    showToast(`Product deleted`, 'info');
+    productService.deleteProduct(id);
+    addActivityLog('Deleted Product', `Deleted product: "${item?.name || id}"`, 'product');
+    showToast('Product deleted', 'info');
   };
 
   const duplicateProduct = (id: string): Product | null => {
-    const target = products.find((p) => p.id === id);
-    if (!target) return null;
-    const duplicated: Product = {
-      ...target,
-      id: `prod-${Date.now()}`,
-      name: `${target.name} (Copy)`,
-      slug: `${target.slug}-copy-${Math.floor(Math.random() * 1000)}`,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
+    const source = products.find((p) => p.id === id);
+    if (!source) return null;
+
+    const duplicateData: Omit<Product, 'id' | 'createdAt' | 'updatedAt'> = {
+      ...source,
+      name: `${source.name} (Copy)`,
+      slug: `${source.slug}-copy-${Date.now().toString().slice(-4)}`,
     };
-    setProducts((prev) => [duplicated, ...prev]);
-    addActivityLog('Product Duplicated', `Duplicated "${target.name}" to "${duplicated.name}"`, 'product');
-    showToast(`Product duplicated!`);
-    return duplicated;
+    return addProduct(duplicateData);
   };
 
   // Category CRUD
   const addCategory = (catData: Omit<Category, 'id'>): Category => {
-    const newCat: Category = {
-      ...catData,
-      id: `cat-${Date.now()}`,
-    };
-    setCategories((prev) => [...prev, newCat]);
-    addActivityLog('Category Created', `Created category "${newCat.name}"`, 'product');
-    showToast(`Category "${newCat.name}" created!`);
-    return newCat;
+    const newId = `cat-${Date.now()}`;
+    const newCategory: Category = { ...catData, id: newId };
+    setCategories((prev) => [...prev, newCategory]);
+    categoryService.createCategory(catData);
+    addActivityLog('Created Category', `Added menu category "${newCategory.name}"`, 'product');
+    showToast(`Category "${newCategory.name}" added!`);
+    return newCategory;
   };
 
-  const updateCategory = (id: string, updated: Partial<Category>) => {
-    setCategories((prev) => prev.map((c) => (c.id === id ? { ...c, ...updated } : c)));
-    addActivityLog('Category Updated', `Updated category ID: ${id}`, 'product');
-    showToast('Category updated!');
+  const updateCategory = (id: string, updates: Partial<Category>) => {
+    setCategories((prev) =>
+      prev.map((c) => (c.id === id ? { ...c, ...updates } : c))
+    );
+    categoryService.updateCategory(id, updates);
+    addActivityLog('Updated Category', `Updated category ID #${id}`, 'product');
+    showToast('Category updated successfully!');
   };
 
   const deleteCategory = (id: string): { success: boolean; message?: string } => {
     const hasProducts = products.some((p) => p.categoryId === id);
     if (hasProducts) {
-      showToast('Cannot delete category: products are assigned to it.', 'error');
-      return { success: false, message: 'Products are still assigned to this category.' };
+      return {
+        success: false,
+        message: 'Cannot delete category containing food products. Please reassign products first.',
+      };
     }
-    const target = categories.find((c) => c.id === id);
     setCategories((prev) => prev.filter((c) => c.id !== id));
-    addActivityLog('Category Deleted', `Deleted category "${target?.name || id}"`, 'product');
+    categoryService.deleteCategory(id);
+    addActivityLog('Deleted Category', `Removed category ID #${id}`, 'product');
     showToast('Category deleted', 'info');
     return { success: true };
   };
@@ -581,177 +806,218 @@ export const RestaurantProvider: React.FC<{ children: ReactNode }> = ({ children
     resData: Omit<Reservation, 'id' | 'referenceNumber' | 'createdAt' | 'updatedAt' | 'status'>
   ): Reservation => {
     const refNum = `RES-${Math.floor(10000 + Math.random() * 90000)}`;
-    const newRes: Reservation = {
+    const newReservation: Reservation = {
       ...resData,
       id: `res-${Date.now()}`,
       referenceNumber: refNum,
-      status: 'Confirmed',
+      status: 'Pending',
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     };
-    setReservations((prev) => [newRes, ...prev]);
-    addActivityLog('Reservation Booked', `Table booked by ${newRes.customerName} for ${newRes.guests} guests (${refNum})`, 'reservation');
-    pushNotification('Reservation Confirmed', `Booking ${refNum} for ${newRes.date} at ${newRes.timeSlot} is confirmed.`, 'reservation', '/reservations');
-    showToast(`Reservation #${refNum} confirmed!`);
-    return newRes;
+    setReservations((prev) => [newReservation, ...prev]);
+    reservationService.createReservation(resData, user?.id);
+
+    addActivityLog(
+      'Reservation Received',
+      `Booking #${refNum} for ${newReservation.guests} guests by ${newReservation.customerName}`,
+      'reservation'
+    );
+    pushNotification(
+      'New Table Booking',
+      `Reservation #${refNum} for ${newReservation.date} at ${newReservation.timeSlot}.`,
+      'reservation',
+      `/account/reservations`
+    );
+    showToast('Reservation requested successfully! Our team will confirm shortly.');
+    return newReservation;
   };
 
-  const updateReservationStatus = (id: string, status: ReservationStatus, tableAssigned?: string) => {
+  const updateReservationStatus = (
+    id: string,
+    status: ReservationStatus,
+    tableAssigned?: string
+  ) => {
     setReservations((prev) =>
       prev.map((r) =>
         r.id === id
           ? {
               ...r,
               status,
-              tableAssigned: tableAssigned !== undefined ? tableAssigned : r.tableAssigned,
+              tableAssigned: tableAssigned ?? r.tableAssigned,
               updatedAt: new Date().toISOString(),
             }
           : r
       )
     );
-    addActivityLog('Reservation Status Updated', `Reservation ${id} marked as ${status}`, 'reservation');
+    reservationService.updateReservationStatus(id, status, tableAssigned);
+    addActivityLog('Reservation Status Updated', `Booking #${id} marked as "${status}"`, 'reservation');
     showToast(`Reservation marked as ${status}`);
   };
 
   const deleteReservation = (id: string) => {
     setReservations((prev) => prev.filter((r) => r.id !== id));
-    addActivityLog('Reservation Deleted', `Deleted reservation ${id}`, 'reservation');
+    reservationService.deleteReservation(id);
     showToast('Reservation deleted', 'info');
   };
 
   // Review CRUD
   const addReview = (reviewData: Omit<Review, 'id' | 'date' | 'isApproved'>) => {
-    const newRev: Review = {
+    const today = new Date().toISOString().split('T')[0];
+    const newReview: Review = {
       ...reviewData,
       id: `rev-${Date.now()}`,
-      date: 'Just now',
-      isApproved: true, // auto approve in demo
+      date: today,
+      isApproved: true,
     };
-    setReviews((prev) => [newRev, ...prev]);
-    addActivityLog('Review Submitted', `New ${newRev.rating}-star review by ${newRev.authorName}`, 'review');
-    showToast('Thank you for your review!');
+    setReviews((prev) => [newReview, ...prev]);
+    reviewService.createReview(reviewData, user?.id);
+    addActivityLog('New Customer Review', `${newReview.authorName} left a ${newReview.rating}★ rating`, 'review');
+    showToast('Thank you! Your dining review has been posted.');
   };
 
   const toggleReviewApproval = (id: string) => {
+    const rev = reviews.find((r) => r.id === id);
+    if (!rev) return;
     setReviews((prev) =>
       prev.map((r) => (r.id === id ? { ...r, isApproved: !r.isApproved } : r))
     );
-    showToast('Review visibility updated');
+    reviewService.toggleApproval(id, rev.isApproved);
+    showToast(`Review visibility updated`);
   };
 
   const deleteReview = (id: string) => {
     setReviews((prev) => prev.filter((r) => r.id !== id));
+    reviewService.deleteReview(id);
     showToast('Review deleted', 'info');
   };
 
   // Coupon CRUD
-  const addCoupon = (coupData: Omit<Coupon, 'id' | 'usedCount'>): Coupon => {
+  const addCoupon = (couponData: Omit<Coupon, 'id' | 'usedCount'>): Coupon => {
     const newCoupon: Coupon = {
-      ...coupData,
-      id: `coup-${Date.now()}`,
+      ...couponData,
+      id: `c-${Date.now()}`,
       usedCount: 0,
+      code: couponData.code.toUpperCase().trim(),
     };
     setCoupons((prev) => [newCoupon, ...prev]);
-    addActivityLog('Coupon Created', `Created promo code ${newCoupon.code}`, 'coupon');
+    couponService.createCoupon(couponData);
+    addActivityLog('Created Deal/Coupon', `Added promo code: ${newCoupon.code}`, 'coupon');
     showToast(`Coupon "${newCoupon.code}" created!`);
     return newCoupon;
   };
 
-  const updateCoupon = (id: string, updated: Partial<Coupon>) => {
-    setCoupons((prev) => prev.map((c) => (c.id === id ? { ...c, ...updated } : c)));
-    addActivityLog('Coupon Updated', `Updated coupon ID: ${id}`, 'coupon');
-    showToast('Coupon updated!');
+  const updateCoupon = (id: string, updates: Partial<Coupon>) => {
+    setCoupons((prev) =>
+      prev.map((c) =>
+        c.id === id
+          ? {
+              ...c,
+              ...updates,
+              code: updates.code ? updates.code.toUpperCase().trim() : c.code,
+            }
+          : c
+      )
+    );
+    couponService.updateCoupon(id, updates);
+    showToast('Coupon updated');
   };
 
   const deleteCoupon = (id: string) => {
     setCoupons((prev) => prev.filter((c) => c.id !== id));
-    addActivityLog('Coupon Deleted', `Deleted coupon ${id}`, 'coupon');
-    showToast('Coupon deleted', 'info');
+    couponService.deleteCoupon(id);
+    showToast('Coupon removed', 'info');
   };
 
   // Gallery CRUD
   const addGalleryItem = (itemData: Omit<GalleryItem, 'id'>) => {
-    const newItem: GalleryItem = {
-      ...itemData,
-      id: `gal-${Date.now()}`,
-    };
+    const newItem: GalleryItem = { ...itemData, id: `gal-${Date.now()}` };
     setGallery((prev) => [newItem, ...prev]);
-    showToast('Gallery image added!');
+    galleryService.addGalleryItem(itemData);
+    showToast('Photo added to gallery!');
   };
 
   const deleteGalleryItem = (id: string) => {
     setGallery((prev) => prev.filter((g) => g.id !== id));
+    galleryService.deleteGalleryItem(id);
     showToast('Gallery image removed', 'info');
   };
 
   // Settings & CMS
   const updateSettings = (newSettings: Partial<WebsiteSettings>) => {
-    setSettings((prev) => ({ ...prev, ...newSettings }));
-    addActivityLog('Settings Updated', 'Restaurant configuration parameters updated', 'settings');
-    showToast('Website settings saved successfully!');
+    setSettings((prev) => {
+      const merged = { ...prev, ...newSettings };
+      contentService.updateSettings(merged);
+      return merged;
+    });
+    addActivityLog('Settings Saved', 'Updated restaurant configuration parameters', 'settings');
+    showToast('Restaurant settings saved!');
   };
 
   const updateNavLinks = (newLinks: NavigationLink[]) => {
     setNavLinks(newLinks);
-    showToast('Navigation links updated!');
+    contentService.updateNavigation(newLinks);
+    showToast('Navigation menu updated!');
   };
 
-  // Derive Customers from Orders and Reservations
+  // Customers aggregation: includes registered Supabase users + delivery order guests
   const customers = useMemo<Customer[]>(() => {
     const map = new Map<string, Customer>();
 
+    // 1. Registered user profiles in Supabase
+    registeredProfiles.forEach((p, idx) => {
+      const key = p.email.toLowerCase().trim() || p.phone?.trim() || p.id;
+      map.set(key, {
+        id: p.id || `profile-${idx}`,
+        name: p.fullName || 'Registered Guest',
+        email: p.email,
+        phone: p.phone || '',
+        city: 'Dhaka',
+        area: 'Dhanmondi',
+        address: '',
+        totalOrders: 0,
+        totalSpent: 0,
+        lastOrderDate: p.createdAt || new Date().toISOString(),
+        joinedAt: p.createdAt || new Date().toISOString(),
+      });
+    });
+
+    // 2. Orders from Supabase / store
     orders.forEach((o) => {
-      const key = o.customer.phone || o.customer.email || o.customer.fullName;
+      const key = o.customer.email.toLowerCase().trim() || o.customer.phone.trim();
       const existing = map.get(key);
+      const spent = o.orderStatus !== 'Canceled' ? o.total : 0;
+
       if (existing) {
         existing.totalOrders += 1;
-        existing.totalSpent += o.total;
-        if (!existing.lastOrderDate || new Date(o.createdAt) > new Date(existing.lastOrderDate)) {
-          existing.lastOrderDate = o.createdAt;
+        existing.totalSpent += spent;
+        existing.lastOrderDate = o.createdAt;
+        if (o.customer.fullName && (!existing.name || existing.name === 'Registered Guest')) {
+          existing.name = o.customer.fullName;
         }
+        if (o.customer.address) existing.address = o.customer.address;
+        if (o.customer.city) existing.city = o.customer.city;
+        if (o.customer.area) existing.area = o.customer.area;
       } else {
         map.set(key, {
-          id: `cust-${key.replace(/[^a-zA-Z0-9]/g, '')}`,
+          id: `cust-${map.size + 1}`,
           name: o.customer.fullName,
-          phone: o.customer.phone,
           email: o.customer.email,
+          phone: o.customer.phone,
+          city: o.customer.city,
           area: o.customer.area,
           address: o.customer.address,
           totalOrders: 1,
-          totalSpent: o.total,
+          totalSpent: spent,
           lastOrderDate: o.createdAt,
           joinedAt: o.createdAt,
         });
       }
     });
 
-    reservations.forEach((r) => {
-      const key = r.customerPhone || r.customerEmail || r.customerName;
-      const existing = map.get(key);
-      if (existing) {
-        if (!existing.lastReservationDate || new Date(r.createdAt) > new Date(existing.lastReservationDate)) {
-          existing.lastReservationDate = r.createdAt;
-        }
-      } else {
-        map.set(key, {
-          id: `cust-${key.replace(/[^a-zA-Z0-9]/g, '')}`,
-          name: r.customerName,
-          phone: r.customerPhone,
-          email: r.customerEmail,
-          area: 'Dhanmondi',
-          address: 'Demo Address',
-          totalOrders: 0,
-          totalSpent: 0,
-          lastReservationDate: r.createdAt,
-          joinedAt: r.createdAt,
-        });
-      }
-    });
-
     return Array.from(map.values());
-  }, [orders, reservations]);
+  }, [orders, registeredProfiles]);
 
-  // Reset Demo Data
+  // System
   const resetDemoData = () => {
     setProducts(INITIAL_PRODUCTS);
     setCategories(INITIAL_CATEGORIES);
@@ -765,69 +1031,28 @@ export const RestaurantProvider: React.FC<{ children: ReactNode }> = ({ children
     setActivityLogs(INITIAL_ACTIVITY_LOGS);
     setCart([]);
     setAppliedCoupon(null);
-    setNotifications([
-      {
-        id: 'notif-reset',
-        title: 'Demo Data Restored',
-        message: 'All restaurant records have been reset to factory defaults.',
-        type: 'system',
-        read: false,
-        createdAt: new Date().toISOString(),
-      },
-    ]);
-    localStorage.clear();
-    showToast('Demo data reset to original defaults!', 'info');
+    showToast('System reset to verified demo dataset!');
   };
 
-  // Restore Restaurant Data from Google Drive Backup
   const restoreRestaurantBackup = (backupData: any): { success: boolean; message: string } => {
     try {
       if (!backupData || typeof backupData !== 'object') {
-        return { success: false, message: 'Invalid backup file structure.' };
+        return { success: false, message: 'Invalid backup file format.' };
       }
-      if (Array.isArray(backupData.products)) {
-        setProducts(backupData.products);
-        saveToStorage(STORAGE_KEYS.PRODUCTS, backupData.products);
-      }
-      if (Array.isArray(backupData.categories)) {
-        setCategories(backupData.categories);
-        saveToStorage(STORAGE_KEYS.CATEGORIES, backupData.categories);
-      }
-      if (Array.isArray(backupData.orders)) {
-        setOrders(backupData.orders);
-        saveToStorage(STORAGE_KEYS.ORDERS, backupData.orders);
-      }
-      if (Array.isArray(backupData.reservations)) {
-        setReservations(backupData.reservations);
-        saveToStorage(STORAGE_KEYS.RESERVATIONS, backupData.reservations);
-      }
-      if (Array.isArray(backupData.reviews)) {
-        setReviews(backupData.reviews);
-        saveToStorage(STORAGE_KEYS.REVIEWS, backupData.reviews);
-      }
-      if (Array.isArray(backupData.coupons)) {
-        setCoupons(backupData.coupons);
-        saveToStorage(STORAGE_KEYS.COUPONS, backupData.coupons);
-      }
-      if (Array.isArray(backupData.gallery)) {
-        setGallery(backupData.gallery);
-        saveToStorage(STORAGE_KEYS.GALLERY, backupData.gallery);
-      }
-      if (backupData.settings && typeof backupData.settings === 'object') {
-        setSettings(backupData.settings);
-        saveToStorage(STORAGE_KEYS.SETTINGS, backupData.settings);
-      }
-      if (Array.isArray(backupData.navLinks)) {
-        setNavLinks(backupData.navLinks);
-        saveToStorage(STORAGE_KEYS.NAV_LINKS, backupData.navLinks);
-      }
-      addActivityLog('Google Drive Restore', 'Restored restaurant database from Google Drive backup file', 'settings');
-      showToast('Restaurant database restored from Google Drive successfully!', 'success');
-      return { success: true, message: 'All restaurant records successfully restored.' };
+      if (Array.isArray(backupData.products)) setProducts(backupData.products);
+      if (Array.isArray(backupData.categories)) setCategories(backupData.categories);
+      if (Array.isArray(backupData.orders)) setOrders(backupData.orders);
+      if (Array.isArray(backupData.reservations)) setReservations(backupData.reservations);
+      if (Array.isArray(backupData.reviews)) setReviews(backupData.reviews);
+      if (Array.isArray(backupData.coupons)) setCoupons(backupData.coupons);
+      if (Array.isArray(backupData.gallery)) setGallery(backupData.gallery);
+      if (backupData.settings) setSettings(backupData.settings);
+      if (Array.isArray(backupData.navLinks)) setNavLinks(backupData.navLinks);
+
+      showToast('Restaurant backup restored successfully!');
+      return { success: true, message: 'Backup restored successfully!' };
     } catch (err: any) {
-      console.error('Failed to restore backup:', err);
-      showToast(`Restore failed: ${err.message}`, 'error');
-      return { success: false, message: err.message || 'Failed to restore backup.' };
+      return { success: false, message: err?.message || 'Restore error' };
     }
   };
 
@@ -849,6 +1074,16 @@ export const RestaurantProvider: React.FC<{ children: ReactNode }> = ({ children
         cart,
         appliedCoupon,
         toasts,
+        supabaseStatus,
+        isBackendConnected: Boolean(supabaseStatus?.ok),
+        isSyncing,
+        lastSyncedAt,
+        refreshFromSupabase,
+        registeredProfiles,
+        playNotificationSound,
+        pushNotification,
+        deleteNotification,
+        clearAllNotifications,
         addToCart,
         updateCartQuantity,
         setCartQuantity,
@@ -887,6 +1122,7 @@ export const RestaurantProvider: React.FC<{ children: ReactNode }> = ({ children
         removeToast,
         resetDemoData,
         restoreRestaurantBackup,
+        checkBackendConnection,
         cartTotals,
       }}
     >
