@@ -5,6 +5,7 @@
 
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
 import { ActivityLog } from '../types';
+import { toValidUuidOrNull } from '../lib/uuid';
 
 export const activityService = {
   fetchActivityLogs: async (): Promise<ActivityLog[] | null> => {
@@ -45,7 +46,7 @@ export const activityService = {
         action,
         details,
         category,
-        user_id: userId || null,
+        user_id: toValidUuidOrNull(userId),
         timestamp: new Date().toISOString(),
       });
     } catch (err) {

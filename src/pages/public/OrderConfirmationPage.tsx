@@ -13,14 +13,42 @@ import {
   ShieldCheck,
 } from 'lucide-react';
 import { useRestaurant } from '../../context/RestaurantContext';
+import { orderService } from '../../services/orderService';
+import { Order } from '../../types';
 
 export const OrderConfirmationPage: React.FC = () => {
   const { orderId } = useParams<{ orderId: string }>();
   const { orders, settings } = useRestaurant();
+  const [fetchedOrder, setFetchedOrder] = React.useState<Order | null>(null);
+  const [isSearching, setIsSearching] = React.useState(false);
 
-  const order = orders.find(
-    (o) => o.orderNumber.toUpperCase() === orderId?.toUpperCase() || o.id === orderId
-  );
+  const order =
+    orders.find(
+      (o) => o.orderNumber.toUpperCase() === orderId?.toUpperCase() || o.id === orderId
+    ) || fetchedOrder;
+
+  React.useEffect(() => {
+    if (!order && orderId) {
+      setIsSearching(true);
+      orderService
+        .getOrderById(orderId)
+        .then((found) => {
+          if (found) setFetchedOrder(found);
+        })
+        .finally(() => {
+          setIsSearching(false);
+        });
+    }
+  }, [order, orderId]);
+
+  if (isSearching) {
+    return (
+      <div className="max-w-xl mx-auto py-24 px-4 text-center">
+        <div className="w-12 h-12 border-3 border-[#F5B51B] border-t-transparent rounded-full animate-spin mx-auto mb-4" />
+        <p className="text-xs text-gray-500">Loading order confirmation...</p>
+      </div>
+    );
+  }
 
   if (!order) {
     return (

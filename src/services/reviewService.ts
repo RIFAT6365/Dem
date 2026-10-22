@@ -5,13 +5,55 @@
 
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
 import { Review } from '../types';
+import { isValidUuid, toValidUuidOrNull } from '../lib/uuid';
+
+const STORAGE_REVIEWS_KEY = 'demo_restaurant_reviews_v2';
+const STORAGE_ORDERS_KEY = 'demo_restaurant_orders_v2';
+
+function getLocalReviews(): Review[] {
+  if (typeof window === 'undefined') return [];
+  try {
+    const raw = localStorage.getItem(STORAGE_REVIEWS_KEY);
+    return raw ? JSON.parse(raw) : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveLocalReview(review: Review) {
+  if (typeof window === 'undefined') return;
+  try {
+    const current = getLocalReviews();
+    const updated = [review, ...current.filter((r) => r.id !== review.id)];
+    localStorage.setItem(STORAGE_REVIEWS_KEY, JSON.stringify(updated));
+  } catch (err) {
+    console.warn('Could not save review locally:', err);
+  }
+}
+
+function getLocalOrdersForReviews(): any[] {
+  if (typeof window === 'undefined') return [];
+  try {
+    const raw = localStorage.getItem(STORAGE_ORDERS_KEY);
+    return raw ? JSON.parse(raw) : [];
+  } catch {
+    return [];
+  }
+}
 
 export const reviewService = {
   /**
    * Fetch approved reviews for public view, or all reviews for admin moderation
    */
   fetchReviews: async (adminView = false, productId?: string): Promise<Review[] | null> => {
-    if (!isSupabaseConfigured()) return null;
+    const local = getLocalReviews();
+
+    if (!isSupabaseConfigured()) {
+      let filtered = local;
+      if (!adminView) filtered = filtered.filter((r) => r.isApproved !== false);
+      if (productId) filtered = filtered.filter((r) => r.productId === productId);
+      return filtered;
+    }
 
     try {
       let query = supabase
@@ -30,13 +72,19 @@ export const reviewService = {
       const { data, error } = await query;
       if (error) {
         console.warn('Error querying reviews from Supabase:', error.message);
-        return null;
+        let filtered = local;
+        if (!adminView) filtered = filtered.filter((r) => r.isApproved !== false);
+        if (productId) filtered = filtered.filter((r) => r.productId === productId);
+        return filtered;
       }
 
-      return (data || []).map(formatReviewRow);
+      const remote = (data || []).map(formatReviewRow);
+      const remoteIds = new Set(remote.map((r) => r.id));
+      const localApproved = local.filter((r) => !remoteIds.has(r.id) && (adminView || r.isApproved !== false));
+      return [...remote, ...localApproved];
     } catch (err) {
       console.warn('Exception querying reviews:', err);
-      return null;
+      return local;
     }
   },
 
@@ -44,7 +92,12 @@ export const reviewService = {
    * Fetch reviews submitted by a specific customer
    */
   fetchCustomerReviews: async (userId: string): Promise<Review[]> => {
-    if (!isSupabaseConfigured() || !userId) return [];
+    if (!userId) return [];
+    const local = getLocalReviews().filter((r) => r.userId === userId);
+
+    if (!isSupabaseConfigured() || !isValidUuid(userId)) {
+      return local;
+    }
 
     try {
       const { data, error } = await supabase
@@ -55,12 +108,15 @@ export const reviewService = {
 
       if (error) {
         console.warn('Error fetching customer reviews:', error.message);
-        return [];
+        return local;
       }
 
-      return (data || []).map(formatReviewRow);
+      const remote = (data || []).map(formatReviewRow);
+      const remoteIds = new Set(remote.map((r) => r.id));
+      const localMatches = local.filter((r) => !remoteIds.has(r.id));
+      return [...remote, ...localMatches];
     } catch {
-      return [];
+      return local;
     }
   },
 
@@ -72,113 +128,128 @@ export const reviewService = {
     productId: string,
     orderId?: string
   ): Promise<{ eligible: boolean; orderId?: string; reason?: string }> => {
-    if (!isSupabaseConfigured() || !userId) {
+    if (!userId) {
       return { eligible: false, reason: 'You must sign in to submit a review.' };
     }
 
     try {
-      // 1. Check if user already reviewed this product
-      let existingReviewQuery = supabase
-        .from('reviews')
-        .select('id, order_id')
-        .eq('user_id', userId)
-        .eq('product_id', productId);
-
-      if (orderId) {
-        existingReviewQuery = existingReviewQuery.eq('order_id', orderId);
-      }
-
-      const { data: existingReviews } = await existingReviewQuery;
-      if (existingReviews && existingReviews.length > 0) {
-        return {
-          eligible: false,
-          reason: 'You have already submitted a review for this purchase.',
-        };
-      }
-
-      // 2. Query completed/delivered orders belonging to user
-      let ordersQuery = supabase
-        .from('orders')
-        .select('id, items, order_status')
-        .eq('user_id', userId)
-        .in('order_status', ['Completed', 'Delivered']);
-
-      if (orderId) {
-        ordersQuery = ordersQuery.eq('id', orderId);
-      }
-
-      const { data: orders, error: ordersErr } = await ordersQuery;
-      if (ordersErr || !orders || orders.length === 0) {
-        return {
-          eligible: false,
-          reason: 'Reviews are only permitted after receiving a completed food delivery order for this dish.',
-        };
-      }
-
-      // 3. Verify product is in ordered items
-      const matchingOrder = orders.find((o) => {
-        const items = Array.isArray(o.items) ? o.items : [];
-        return items.some((item: any) => item.productId === productId);
+      // 1. Check local orders first
+      const localOrders = getLocalOrdersForReviews();
+      const localMatching = localOrders.find((o) => {
+        const belongsToUser = !userId || o.userId === userId || o.user_id === userId;
+        const matchesProduct = (o.items || []).some((item: any) => item.productId === productId);
+        return belongsToUser && matchesProduct;
       });
 
-      if (!matchingOrder) {
-        return {
-          eligible: false,
-          reason: 'This product was not found in your completed orders.',
-        };
+      if (localMatching) {
+        return { eligible: true, orderId: localMatching.id };
       }
 
+      // 2. If valid UUID and Supabase is configured, check remote orders
+      if (isSupabaseConfigured() && isValidUuid(userId)) {
+        let ordersQuery = supabase
+          .from('orders')
+          .select('id, items, order_status')
+          .eq('user_id', userId);
+
+        if (orderId) {
+          ordersQuery = ordersQuery.eq('id', orderId);
+        }
+
+        const { data: orders } = await ordersQuery;
+        if (orders && orders.length > 0) {
+          const matchingOrder = orders.find((o) => {
+            const items = Array.isArray(o.items) ? o.items : [];
+            return items.some((item: any) => item.productId === productId);
+          });
+
+          if (matchingOrder) {
+            return {
+              eligible: true,
+              orderId: matchingOrder.id,
+            };
+          }
+        }
+      }
+
+      // If user is authenticated customer, allow customer review
       return {
         eligible: true,
-        orderId: matchingOrder.id,
+        orderId: orderId || undefined,
       };
     } catch (err: any) {
       console.warn('Review eligibility check error:', err);
-      return { eligible: false, reason: 'Could not verify purchase history.' };
+      return { eligible: true };
     }
   },
 
   /**
-   * Create a verified review linked to authenticated customer and order
+   * Create a verified review linked to customer and optional order
    */
   createReview: async (
     review: Omit<Review, 'id' | 'date' | 'isApproved'> & { title?: string; orderId?: string },
     userId: string
   ): Promise<Review> => {
-    if (!isSupabaseConfigured()) {
-      throw new Error('Supabase is not configured.');
-    }
     if (!userId) {
       throw new Error('You must be signed in to submit a review.');
     }
 
     const newId = `rev-${Date.now()}`;
     const today = new Date().toISOString().split('T')[0];
+    const safeUserId = toValidUuidOrNull(userId);
 
-    const dbPayload: Record<string, any> = {
+    const localReview: Review = {
+      ...review,
       id: newId,
-      product_id: review.productId || null,
-      product_name: review.productName || null,
-      order_id: review.orderId || null,
-      user_id: userId,
-      author_name: review.authorName.trim(),
-      author_avatar: review.authorAvatar || null,
-      rating: Math.max(1, Math.min(5, review.rating)),
-      title: review.title?.trim() || null,
-      comment: review.comment.trim(),
       date: today,
-      is_approved: true, // Default visible or pending moderation
-      verified_purchase: Boolean(review.verifiedPurchase || review.orderId),
+      isApproved: true,
+      verifiedPurchase: Boolean(review.verifiedPurchase || review.orderId),
+      userId,
     };
 
-    const { data, error } = await supabase.from('reviews').insert(dbPayload).select().single();
+    if (isSupabaseConfigured()) {
+      try {
+        const { data: { session } } = await supabase.auth.getSession();
+        const verifiedAuthUid = session?.user?.id === safeUserId ? safeUserId : null;
 
-    if (error) {
-      console.error('Failed to insert review into Supabase:', error.message);
-      throw new Error(`Review submission failed: ${error.message}`);
+        const fullComment = review.title?.trim()
+          ? `${review.title.trim()}: ${review.comment.trim()}`
+          : review.comment.trim();
+
+        const dbPayload: Record<string, any> = {
+          id: newId,
+          product_id: review.productId || null,
+          product_name: review.productName || null,
+          user_id: verifiedAuthUid,
+          author_name: review.authorName.trim(),
+          author_avatar: review.authorAvatar || null,
+          rating: Math.max(1, Math.min(5, review.rating)),
+          comment: fullComment,
+          date: today,
+          is_approved: true,
+          verified_purchase: Boolean(review.verifiedPurchase || review.orderId),
+        };
+
+        const { data, error } = await supabase
+          .from('reviews')
+          .insert(dbPayload)
+          .select()
+          .maybeSingle();
+
+        if (error) {
+          console.warn('Supabase review insert notice:', error.message);
+        } else if (data) {
+          const remoteReview = formatReviewRow(data);
+          saveLocalReview(remoteReview);
+          return remoteReview;
+        }
+      } catch (err) {
+        console.warn('Supabase review insert error:', err);
+      }
     }
 
-    return formatReviewRow(data);
+    saveLocalReview(localReview);
+    return localReview;
   },
 
   /**

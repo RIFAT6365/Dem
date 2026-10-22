@@ -9,8 +9,12 @@ import { User } from '@supabase/supabase-js';
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
 import { authService, UserProfile, UserRole } from '../services/authService';
 
+import { DEMO_ADMIN_ID, DEMO_CUSTOMER_ID, isValidUuid } from '../lib/uuid';
+
+export { DEMO_ADMIN_ID, DEMO_CUSTOMER_ID };
+
 const DEMO_ADMIN_USER: User = {
-  id: 'demo-admin-id',
+  id: DEMO_ADMIN_ID,
   app_metadata: { provider: 'email', providers: ['email'] },
   user_metadata: {
     full_name: 'Restaurant Administrator',
@@ -37,7 +41,7 @@ const DEMO_ADMIN_USER: User = {
 };
 
 const DEMO_CUSTOMER_USER: User = {
-  id: 'demo-customer-id',
+  id: DEMO_CUSTOMER_ID,
   app_metadata: { provider: 'email', providers: ['email'] },
   user_metadata: {
     full_name: 'Valued Customer',
@@ -106,9 +110,9 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     setUser(currentUser);
 
     // Mock admin user handling
-    if (currentUser.id === 'demo-admin-id') {
+    if (currentUser.id === DEMO_ADMIN_ID || currentUser.id === 'demo-admin-id') {
       setProfile({
-        id: 'demo-admin-id',
+        id: DEMO_ADMIN_ID,
         fullName: 'Restaurant Administrator',
         email: 'admin@demorestaurant.com',
         phone: '+880 1711 223344',
@@ -120,9 +124,9 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     }
 
     // Mock customer user handling
-    if (currentUser.id === 'demo-customer-id') {
+    if (currentUser.id === DEMO_CUSTOMER_ID || currentUser.id === 'demo-customer-id') {
       setProfile({
-        id: 'demo-customer-id',
+        id: DEMO_CUSTOMER_ID,
         fullName: currentUser.user_metadata?.full_name || 'Valued Customer',
         email: currentUser.email || 'customer@demorestaurant.com',
         phone: currentUser.phone || '+880 1711 998877',
@@ -231,33 +235,50 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
   const signIn = async (email: string, password: string) => {
     setIsLoading(true);
+    const cleanEmail = email.trim();
     try {
-      try {
-        const result = await authService.signInWithPassword(email, password);
-        localStorage.removeItem('dem_mock_session');
-        await loadUserData(result.user);
-      } catch (err) {
-        // Fallback for demo environments or when Supabase is not reachable
-        const isDemoAdmin =
-          email.toLowerCase().includes('admin') ||
-          password === 'admin' ||
-          password === 'admin123';
-        if (isDemoAdmin) {
-          localStorage.setItem('dem_mock_session', 'admin');
-          await loadUserData(DEMO_ADMIN_USER);
-        } else {
-          localStorage.setItem('dem_mock_session', 'customer');
-          const customCustomer: User = {
-            ...DEMO_CUSTOMER_USER,
-            email: email.trim(),
-            user_metadata: {
-              ...DEMO_CUSTOMER_USER.user_metadata,
-              full_name: email.split('@')[0] || 'Valued Customer',
-            },
-          };
-          await loadUserData(customCustomer);
-        }
+      // 1. Check for explicit demo credentials
+      const isExplicitDemoAdmin =
+        (cleanEmail.toLowerCase() === 'admin@demorestaurant.com' || cleanEmail.toLowerCase() === 'admin@bellagio.com') &&
+        (password === 'admin123' || password === 'admin');
+
+      const isExplicitDemoCustomer =
+        (cleanEmail.toLowerCase() === 'customer@demorestaurant.com' || cleanEmail.toLowerCase() === 'customer@bellagio.com') &&
+        (password === 'customer123' || password === 'customer');
+
+      if (isExplicitDemoAdmin) {
+        localStorage.setItem('dem_mock_session', 'admin');
+        await loadUserData(DEMO_ADMIN_USER);
+        return;
       }
+
+      if (isExplicitDemoCustomer) {
+        localStorage.setItem('dem_mock_session', 'customer');
+        await loadUserData(DEMO_CUSTOMER_USER);
+        return;
+      }
+
+      // 2. Real Supabase Authentication — strictly validate against Supabase
+      if (!isSupabaseConfigured()) {
+        throw new Error('Supabase database is not configured. Please supply your API key or use Quick Demo login.');
+      }
+
+      const result = await authService.signInWithPassword(cleanEmail, password);
+      localStorage.removeItem('dem_mock_session');
+      await loadUserData(result.user);
+    } catch (err: any) {
+      const msg = err?.message || String(err);
+      if (
+        msg.toLowerCase().includes('invalid login credentials') ||
+        msg.toLowerCase().includes('invalid grant') ||
+        msg.toLowerCase().includes('invalid_grant')
+      ) {
+        throw new Error('Incorrect email or password. Please verify your credentials and try again.');
+      }
+      if (msg.toLowerCase().includes('email not confirmed')) {
+        throw new Error('Your email has not been confirmed yet. Please check your inbox or sign in with OTP.');
+      }
+      throw new Error(msg || 'Failed to sign in. Please verify your credentials.');
     } finally {
       setIsLoading(false);
     }
@@ -275,6 +296,10 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   }) => {
     setIsLoading(true);
     try {
+      if (!isSupabaseConfigured()) {
+        throw new Error('Supabase database is not configured. Please enter your publishable key.');
+      }
+
       const result = await authService.signUp(params);
       const needsEmailVerification = !result.session && Boolean(result.user);
       if (result.user && result.session) {
@@ -282,19 +307,12 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         await loadUserData(result.user);
       }
       return { needsEmailVerification };
-    } catch {
-      // Fallback demo signup
-      localStorage.setItem('dem_mock_session', 'customer');
-      const customCustomer: User = {
-        ...DEMO_CUSTOMER_USER,
-        email: params.email.trim(),
-        user_metadata: {
-          full_name: params.fullName.trim(),
-          phone: params.phone?.trim() || '',
-        },
-      };
-      await loadUserData(customCustomer);
-      return { needsEmailVerification: false };
+    } catch (err: any) {
+      const msg = err?.message || String(err);
+      if (msg.toLowerCase().includes('user already registered') || msg.toLowerCase().includes('already exists')) {
+        throw new Error('An account with this email address already exists. Please sign in instead.');
+      }
+      throw new Error(msg || 'Failed to register account. Please try again.');
     } finally {
       setIsLoading(false);
     }
@@ -327,7 +345,12 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
   const updateProfile = async (updates: Partial<UserProfile>) => {
     if (!user) throw new Error('Not authenticated');
-    if (user.id === 'demo-admin-id' || user.id === 'demo-customer-id') {
+    if (
+      user.id === DEMO_ADMIN_ID ||
+      user.id === DEMO_CUSTOMER_ID ||
+      user.id === 'demo-admin-id' ||
+      user.id === 'demo-customer-id'
+    ) {
       setProfile((prev) => (prev ? { ...prev, ...updates } : null));
       return;
     }

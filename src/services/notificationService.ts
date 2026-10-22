@@ -5,6 +5,7 @@
 
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
 import { NotificationItem } from '../types';
+import { isValidUuid, toValidUuidOrNull } from '../lib/uuid';
 
 export const notificationService = {
   /**
@@ -21,7 +22,11 @@ export const notificationService = {
         .limit(50);
 
       if (!isAdmin && userId) {
-        query = query.or(`user_id.eq.${userId},user_id.is.null`);
+        if (isValidUuid(userId)) {
+          query = query.or(`user_id.eq.${userId},user_id.is.null`);
+        } else {
+          query = query.is('user_id', null);
+        }
       }
 
       const { data, error } = await query;
@@ -77,10 +82,12 @@ export const notificationService = {
 
     if (isSupabaseConfigured()) {
       try {
+        const safeUserId = toValidUuidOrNull(params.userId);
+
         const { data, error } = await supabase
           .from('notifications')
           .insert({
-            user_id: params.userId || null,
+            user_id: safeUserId,
             title: params.title,
             message: params.message,
             type: params.type,
@@ -147,7 +154,7 @@ export const notificationService = {
 
     try {
       let query = supabase.from('notifications').update({ is_read: true }).eq('is_read', false);
-      if (userId) {
+      if (userId && isValidUuid(userId)) {
         query = query.eq('user_id', userId);
       }
       const { error } = await query;

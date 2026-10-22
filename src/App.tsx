@@ -71,11 +71,18 @@ import { AdminNavigationPage } from './pages/admin/AdminNavigationPage';
 import { AdminActivityPage } from './pages/admin/AdminActivityPage';
 import { AdminGoogleDrivePage } from './pages/admin/AdminGoogleDrivePage';
 
+const getBasename = () => {
+  if (typeof window !== 'undefined' && window.location.pathname.startsWith('/Dem')) {
+    return '/Dem';
+  }
+  return '/';
+};
+
 export default function App() {
   return (
     <AuthProvider>
       <RestaurantProvider>
-        <BrowserRouter>
+        <BrowserRouter basename={getBasename()}>
           <Routes>
             {/* Public Routes with Public Layout */}
             <Route element={<PublicLayout />}>

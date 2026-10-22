@@ -7,16 +7,18 @@
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 
 export const SUPABASE_PROJECT_URL =
-  import.meta.env.VITE_SUPABASE_URL || 'https://iqnhcovwjwjelinlhkmj.supabase.co';
+  (typeof import.meta !== 'undefined' && import.meta.env?.VITE_SUPABASE_URL) ||
+  'https://iqnhcovwjwjelinlhkmj.supabase.co';
 
 // Official Supabase public anon key supplied for project iqnhcovwjwjelinlhkmj
 const DEFAULT_SUPABASE_ANON_KEY =
   'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imlxbmhjb3Z3andqZWxpbmxoa21qIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTI0OTE5MjMsImV4cCI6MjEwODA2NzkyM30.uJGQRPj1vWTlxOKEI9EmcJFHbiGOwrqNwbRlmSrnnWk';
 
 export const getActiveSupabaseKey = (): string => {
+  const env = typeof import.meta !== 'undefined' ? import.meta.env : undefined;
   const envKey =
-    import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY ||
-    import.meta.env.VITE_SUPABASE_ANON_KEY;
+    env?.VITE_SUPABASE_PUBLISHABLE_KEY ||
+    env?.VITE_SUPABASE_ANON_KEY;
   if (envKey && typeof envKey === 'string' && envKey.trim() && !envKey.includes('placeholder') && envKey.length > 20) {
     return envKey.trim();
   }

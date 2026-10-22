@@ -5,6 +5,7 @@
 
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
 import { Reservation, ReservationStatus } from '../types';
+import { isValidUuid, toValidUuidOrNull } from '../lib/uuid';
 
 export const reservationService = {
   fetchReservations: async (): Promise<Reservation[] | null> => {
@@ -28,7 +29,7 @@ export const reservationService = {
   },
 
   fetchCustomerReservations: async (userId: string): Promise<Reservation[]> => {
-    if (!isSupabaseConfigured() || !userId) return [];
+    if (!isSupabaseConfigured() || !userId || !isValidUuid(userId)) return [];
 
     try {
       const { data, error } = await supabase
@@ -66,7 +67,7 @@ export const reservationService = {
         await supabase.from('reservations').insert({
           id: newId,
           reference_number: referenceNumber,
-          user_id: userId || null,
+          user_id: toValidUuidOrNull(userId),
           customer_name: resData.customerName,
           customer_email: resData.customerEmail,
           customer_phone: resData.customerPhone,

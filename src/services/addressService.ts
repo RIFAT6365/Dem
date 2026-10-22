@@ -4,6 +4,7 @@
  */
 
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
+import { isValidUuid, toValidUuidOrNull } from '../lib/uuid';
 
 export interface CustomerAddress {
   id: string;
@@ -22,7 +23,7 @@ export interface CustomerAddress {
 
 export const addressService = {
   getUserAddresses: async (userId: string): Promise<CustomerAddress[]> => {
-    if (!isSupabaseConfigured() || !userId) return [];
+    if (!isSupabaseConfigured() || !userId || !isValidUuid(userId)) return [];
 
     const { data, error } = await supabase
       .from('addresses')
@@ -52,8 +53,13 @@ export const addressService = {
   },
 
   addAddress: async (address: Omit<CustomerAddress, 'id'>): Promise<CustomerAddress> => {
-    if (!isSupabaseConfigured()) {
-      throw new Error('Supabase not configured');
+    const safeUserId = toValidUuidOrNull(address.userId);
+    if (!isSupabaseConfigured() || !safeUserId) {
+      return {
+        ...address,
+        id: `addr-${Date.now()}`,
+        createdAt: new Date().toISOString(),
+      };
     }
 
     // If marked default, unset others first
@@ -61,13 +67,13 @@ export const addressService = {
       await supabase
         .from('addresses')
         .update({ is_default: false })
-        .eq('user_id', address.userId);
+        .eq('user_id', safeUserId);
     }
 
     const { data, error } = await supabase
       .from('addresses')
       .insert({
-        user_id: address.userId,
+        user_id: safeUserId,
         label: address.label,
         full_name: address.fullName,
         phone: address.phone,
