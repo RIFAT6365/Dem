@@ -74,8 +74,10 @@ interface RestaurantContextType {
   pushNotification: (
     title: string,
     message: string,
-    type: 'order' | 'reservation' | 'promo' | 'system',
-    link?: string
+    type: 'order' | 'reservation' | 'promo' | 'system' | 'review',
+    link?: string,
+    relatedEntityId?: string,
+    targetUserId?: string
   ) => void;
   deleteNotification: (id: string) => void;
   clearAllNotifications: () => void;
@@ -93,6 +95,8 @@ interface RestaurantContextType {
   createOrder: (orderData: Omit<Order, 'id' | 'orderNumber' | 'createdAt' | 'updatedAt'>) => Promise<Order>;
   updateOrderStatus: (orderId: string, status: OrderStatus, riderInfo?: { riderName?: string; riderPhone?: string }) => void;
   cancelOrder: (orderId: string, reason?: string) => void;
+  archiveOrder: (orderId: string) => Promise<void>;
+  unarchiveOrder: (orderId: string) => Promise<void>;
   deleteOrder: (orderId: string) => void;
 
   // Product CRUD
@@ -470,23 +474,47 @@ export const RestaurantProvider: React.FC<{ children: ReactNode }> = ({ children
     setToasts((prev) => prev.filter((t) => t.id !== id));
   };
 
-  // Notification helper
+  // Enhanced Notification helper
   const pushNotification = (
     title: string,
     message: string,
-    type: 'order' | 'reservation' | 'promo' | 'system',
-    link?: string
+    type: 'order' | 'reservation' | 'promo' | 'system' | 'review',
+    link?: string,
+    relatedEntityId?: string,
+    targetUserId?: string
   ) => {
+    const fallbackId = `notif-${Date.now()}-${Math.random().toString(36).substring(2, 5)}`;
     const newNotif: NotificationItem = {
-      id: `notif-${Date.now()}-${Math.random().toString(36).substring(2, 5)}`,
+      id: fallbackId,
+      userId: targetUserId || user?.id,
       title,
       message,
-      type,
+      type: type as any,
       link,
+      relatedEntityId,
       read: false,
       createdAt: new Date().toISOString(),
     };
     setNotifications((prev) => [newNotif, ...prev]);
+
+    // Persist to Supabase if configured
+    notificationService
+      .createNotification({
+        userId: targetUserId || user?.id,
+        title,
+        message,
+        type: type as any,
+        link,
+        relatedEntityId,
+      })
+      .then((created) => {
+        if (created && created.id !== fallbackId) {
+          setNotifications((prev) =>
+            prev.map((n) => (n.id === fallbackId ? created : n))
+          );
+        }
+      })
+      .catch(() => {});
   };
 
   const markNotificationRead = async (id: string) => {
@@ -703,6 +731,25 @@ export const RestaurantProvider: React.FC<{ children: ReactNode }> = ({ children
         'order'
       );
 
+      // Customer notification
+      pushNotification(
+        'Order Placed Successfully',
+        `Your order #${createdOrder.orderNumber} for ${settings.currencySymbol} ${createdOrder.total} is placed. We are preparing it for you!`,
+        'order',
+        `/account/orders/${createdOrder.id}`,
+        createdOrder.id,
+        user.id
+      );
+
+      // Administrator notification
+      pushNotification(
+        'New Customer Order',
+        `New order #${createdOrder.orderNumber} received for ${settings.currencySymbol} ${createdOrder.total} from ${createdOrder.customer.fullName}.`,
+        'order',
+        `/admin/orders?select=${createdOrder.id}`,
+        createdOrder.id
+      );
+
       clearCart();
       showToast(`Order #${createdOrder.orderNumber} placed successfully!`, 'success');
       return createdOrder;
@@ -718,10 +765,12 @@ export const RestaurantProvider: React.FC<{ children: ReactNode }> = ({ children
     riderInfo?: { riderName?: string; riderPhone?: string }
   ) => {
     let orderNum = '';
+    let targetUserId = '';
     setOrders((prev) =>
       prev.map((order) => {
         if (order.id === orderId || order.orderNumber === orderId) {
           orderNum = order.orderNumber;
+          targetUserId = order.userId || '';
           return {
             ...order,
             orderStatus: status,
@@ -739,11 +788,36 @@ export const RestaurantProvider: React.FC<{ children: ReactNode }> = ({ children
 
     addActivityLog('Order Status Updated', `Order #${orderNum || orderId} changed to "${status}"`, 'order');
 
+    let notifTitle = `Order Status: ${status}`;
+    let notifMsg = `Your order #${orderNum || orderId} is now ${status}!`;
+    let notifLink = `/track-order?id=${orderNum || orderId}`;
+
+    if (status === 'Preparing') {
+      notifTitle = 'Food Preparation Started';
+      notifMsg = `The kitchen has started crafting your dishes for order #${orderNum || orderId}!`;
+    } else if (status === 'Ready') {
+      notifTitle = 'Order Ready';
+      notifMsg = `Order #${orderNum || orderId} is freshly prepared and ready for pickup or dispatch.`;
+    } else if (status === 'Out for Delivery') {
+      notifTitle = 'Order Out for Delivery';
+      notifMsg = `Rider ${riderInfo?.riderName ? riderInfo.riderName : ''} is on the way with your order #${orderNum || orderId}!`;
+    } else if (status === 'Completed') {
+      notifTitle = 'Order Completed — Review Your Meal';
+      notifMsg = `Your order #${orderNum || orderId} was delivered! Please rate your dishes and share feedback.`;
+      notifLink = `/account/orders/${orderId}`;
+    } else if (status === 'Canceled') {
+      notifTitle = 'Order Cancelled';
+      notifMsg = `Order #${orderNum || orderId} has been cancelled.`;
+      notifLink = `/account/orders/${orderId}`;
+    }
+
     pushNotification(
-      'Order Status Updated',
-      `Your order #${orderNum || orderId} is now ${status}!`,
+      notifTitle,
+      notifMsg,
       'order',
-      `/track-order?id=${orderNum || orderId}`
+      notifLink,
+      orderId,
+      targetUserId || user?.id
     );
 
     showToast(`Order status updated to "${status}"!`);
@@ -752,6 +826,32 @@ export const RestaurantProvider: React.FC<{ children: ReactNode }> = ({ children
   const cancelOrder = (orderId: string, reason = 'Cancelled by administrator') => {
     updateOrderStatus(orderId, 'Canceled');
     showToast(`Order has been marked as Canceled.`, 'info');
+  };
+
+  const archiveOrder = async (orderId: string) => {
+    setOrders((prev) =>
+      prev.map((o) =>
+        o.id === orderId
+          ? { ...o, isArchived: true, archivedAt: new Date().toISOString() }
+          : o
+      )
+    );
+    await orderService.archiveOrder(orderId);
+    addActivityLog('Order Archived', `Order #${orderId} removed from active management list`, 'order');
+    showToast('Order safely archived from active list');
+  };
+
+  const unarchiveOrder = async (orderId: string) => {
+    setOrders((prev) =>
+      prev.map((o) =>
+        o.id === orderId
+          ? { ...o, isArchived: false, archivedAt: undefined }
+          : o
+      )
+    );
+    await orderService.unarchiveOrder(orderId);
+    addActivityLog('Order Restored', `Order #${orderId} restored to active management list`, 'order');
+    showToast('Order restored to active list');
   };
 
   const deleteOrder = (orderId: string) => {
@@ -861,12 +961,26 @@ export const RestaurantProvider: React.FC<{ children: ReactNode }> = ({ children
       `Booking #${refNum} for ${newReservation.guests} guests by ${newReservation.customerName}`,
       'reservation'
     );
+
+    // Notify customer
     pushNotification(
-      'New Table Booking',
-      `Reservation #${refNum} for ${newReservation.date} at ${newReservation.timeSlot}.`,
+      'Reservation Request Submitted',
+      `Table booking #${refNum} for ${newReservation.guests} guests on ${newReservation.date} at ${newReservation.timeSlot} is pending confirmation.`,
       'reservation',
-      `/account/reservations`
+      `/account/reservations`,
+      newReservation.id,
+      user?.id
     );
+
+    // Notify admin
+    pushNotification(
+      'New Table Reservation',
+      `Booking request #${refNum} for ${newReservation.guests} guests by ${newReservation.customerName} on ${newReservation.date}.`,
+      'reservation',
+      `/admin/reservations?select=${newReservation.id}`,
+      newReservation.id
+    );
+
     showToast('Reservation requested successfully! Our team will confirm shortly.');
     return newReservation;
   };
@@ -876,20 +990,33 @@ export const RestaurantProvider: React.FC<{ children: ReactNode }> = ({ children
     status: ReservationStatus,
     tableAssigned?: string
   ) => {
+    let targetRef = '';
     setReservations((prev) =>
-      prev.map((r) =>
-        r.id === id
-          ? {
-              ...r,
-              status,
-              tableAssigned: tableAssigned ?? r.tableAssigned,
-              updatedAt: new Date().toISOString(),
-            }
-          : r
-      )
+      prev.map((r) => {
+        if (r.id === id) {
+          targetRef = r.referenceNumber;
+          return {
+            ...r,
+            status,
+            tableAssigned: tableAssigned ?? r.tableAssigned,
+            updatedAt: new Date().toISOString(),
+          };
+        }
+        return r;
+      })
     );
     reservationService.updateReservationStatus(id, status, tableAssigned);
-    addActivityLog('Reservation Status Updated', `Booking #${id} marked as "${status}"`, 'reservation');
+    addActivityLog('Reservation Status Updated', `Booking #${targetRef || id} marked as "${status}"`, 'reservation');
+
+    // Notify customer
+    pushNotification(
+      `Table Reservation ${status}`,
+      `Your table reservation #${targetRef || id} is now ${status}.${tableAssigned ? ` Assigned Table: ${tableAssigned}.` : ''}`,
+      'reservation',
+      `/account/reservations`,
+      id
+    );
+
     showToast(`Reservation marked as ${status}`);
   };
 
@@ -912,6 +1039,16 @@ export const RestaurantProvider: React.FC<{ children: ReactNode }> = ({ children
       const created = await reviewService.createReview(reviewData, user.id);
       setReviews((prev) => [created, ...prev.filter((r) => r.id !== created.id)]);
       addActivityLog('New Customer Review', `${created.authorName} left a ${created.rating}★ rating`, 'review');
+
+      // Notify administrator
+      pushNotification(
+        'New Customer Review',
+        `${created.authorName} submitted a ${created.rating}★ review: "${created.comment.substring(0, 45)}..."`,
+        'review',
+        `/admin/reviews?select=${created.id}`,
+        created.id
+      );
+
       showToast('Thank you! Your verified dining review has been posted.');
       return created;
     } catch (err: any) {
@@ -923,6 +1060,7 @@ export const RestaurantProvider: React.FC<{ children: ReactNode }> = ({ children
   const respondToReview = async (id: string, responseText: string): Promise<void> => {
     try {
       await reviewService.respondToReview(id, responseText, user?.id);
+      const targetRev = reviews.find((r) => r.id === id);
       setReviews((prev) =>
         prev.map((r) =>
           r.id === id
@@ -930,6 +1068,17 @@ export const RestaurantProvider: React.FC<{ children: ReactNode }> = ({ children
             : r
         )
       );
+
+      // Notify customer of manager reply
+      pushNotification(
+        'Restaurant Replied to Your Review',
+        `The restaurant responded to your feedback: "${responseText.substring(0, 60)}"`,
+        'review',
+        `/reviews`,
+        id,
+        targetRev?.userId
+      );
+
       showToast('Response successfully published to review!');
     } catch (err: any) {
       showToast(err?.message || 'Failed to post reply.', 'error');
@@ -1165,6 +1314,8 @@ export const RestaurantProvider: React.FC<{ children: ReactNode }> = ({ children
         createOrder,
         updateOrderStatus,
         cancelOrder,
+        archiveOrder,
+        unarchiveOrder,
         deleteOrder,
         addProduct,
         updateProduct,

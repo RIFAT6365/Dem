@@ -9,11 +9,11 @@ import { useAuth } from '../../context/AuthContext';
 import { useRestaurant } from '../../context/RestaurantContext';
 import { orderService } from '../../services/orderService';
 import { Order } from '../../types';
-import { ShoppingBag, ArrowRight, Eye, Calendar, Clock, DollarSign } from 'lucide-react';
+import { ShoppingBag, ArrowRight, Eye, Calendar, Clock, DollarSign, Star, CheckCircle2 } from 'lucide-react';
 
 export const AccountOrdersPage: React.FC = () => {
   const { user } = useAuth();
-  const { settings } = useRestaurant();
+  const { settings, reviews } = useRestaurant();
   const [orders, setOrders] = useState<Order[]>([]);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState<'all' | 'active' | 'completed'>('all');
@@ -135,6 +135,25 @@ export const AccountOrdersPage: React.FC = () => {
                   {order.items.map((i) => `${i.quantity}x ${i.name}`).join(', ')}
                 </div>
                 <div className="flex items-center gap-2">
+                  {order.orderStatus === 'Completed' && (
+                    reviews.some((r) => r.orderId === order.id) ? (
+                      <Link
+                        to="/reviews"
+                        className="px-3 py-1.5 rounded-lg bg-emerald-50 text-emerald-800 font-semibold border border-emerald-200 flex items-center gap-1 hover:bg-emerald-100 transition-colors"
+                      >
+                        <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                        <span>Reviewed</span>
+                      </Link>
+                    ) : (
+                      <Link
+                        to="/reviews"
+                        className="px-3 py-1.5 rounded-lg bg-[#FFF8E7] text-[#07131A] font-bold border border-[#F5B51B]/50 hover:bg-[#F5B51B] transition-colors flex items-center gap-1 shadow-2xs"
+                      >
+                        <Star className="w-3.5 h-3.5 fill-[#E9A817] text-[#E9A817]" />
+                        <span>Review Food</span>
+                      </Link>
+                    )
+                  )}
                   <Link
                     to={`/order-confirmation/${order.orderNumber}`}
                     className="px-3 py-1.5 rounded-lg border border-gray-200 text-gray-700 hover:bg-gray-50 font-semibold"

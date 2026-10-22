@@ -20,6 +20,8 @@ import {
   MapPin,
   Phone,
   ShieldCheck,
+  Star,
+  Sparkles,
 } from 'lucide-react';
 
 const ORDER_STEPS: OrderStatus[] = [
@@ -172,6 +174,29 @@ export const AccountOrderDetailPage: React.FC = () => {
         <div className="p-4 rounded-2xl bg-red-50 border border-red-200 text-red-800 text-xs flex items-center gap-2">
           <AlertCircle className="w-5 h-5 text-red-600 shrink-0" />
           <span>This order was canceled. If you have questions, please call {settings.phone}.</span>
+        </div>
+      )}
+
+      {/* Verified Order Review Action Banner */}
+      {order.orderStatus === 'Completed' && (
+        <div className="p-5 rounded-2xl bg-gradient-to-r from-[#FFF8E7] to-amber-50 border border-[#F5B51B]/50 flex flex-col sm:flex-row sm:items-center justify-between gap-4 shadow-xs">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-[#07131A] text-[#F5B51B] flex items-center justify-center shrink-0">
+              <Star className="w-5 h-5 fill-[#F5B51B]" />
+            </div>
+            <div>
+              <h4 className="font-bold text-sm text-gray-900">How was your dining experience?</h4>
+              <p className="text-xs text-gray-600 mt-0.5">
+                Leave a verified food review for Order #{order.orderNumber} to let the chef and other diners know.
+              </p>
+            </div>
+          </div>
+          <Link
+            to={`/reviews?orderId=${order.id}`}
+            className="px-4 py-2 rounded-xl bg-[#07131A] text-[#F5B51B] font-bold text-xs hover:bg-black transition-colors self-start sm:self-auto shrink-0 shadow-sm"
+          >
+            Review Dishes →
+          </Link>
         </div>
       )}
 

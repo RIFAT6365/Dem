@@ -110,6 +110,9 @@ export interface Order {
   estimatedDeliveryMinutes?: number;
   riderName?: string;
   riderPhone?: string;
+  userId?: string;
+  isArchived?: boolean;
+  archivedAt?: string;
   createdAt: string;
   updatedAt: string;
 }

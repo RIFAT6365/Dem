@@ -22,7 +22,7 @@ import {
 } from 'lucide-react';
 
 export const LoginPage: React.FC<{ isAdminLogin?: boolean }> = ({ isAdminLogin = false }) => {
-  const { signIn, signInWithOtp, isSupabaseReady } = useAuth();
+  const { signIn, signInWithOtp, signInAsDemo, isSupabaseReady } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -40,14 +40,22 @@ export const LoginPage: React.FC<{ isAdminLogin?: boolean }> = ({ isAdminLogin =
   const redirectParam = searchParams.get('redirect');
   const from = redirectParam || (location.state as any)?.from?.pathname || (isAdminLogin ? '/admin' : '/account');
 
+  const handleDemoSignIn = async (roleType: 'admin' | 'customer') => {
+    setIsLoading(true);
+    setErrorMsg('');
+    try {
+      await signInAsDemo(roleType);
+      navigate(from, { replace: true });
+    } catch (err: any) {
+      setErrorMsg(err?.message || 'Failed to authenticate demo user.');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMsg('');
-
-    if (!isSupabaseConfigured()) {
-      setShowKeyModal(true);
-      return;
-    }
 
     if (!email.trim()) {
       setErrorMsg('Please enter your email address.');
@@ -58,6 +66,11 @@ export const LoginPage: React.FC<{ isAdminLogin?: boolean }> = ({ isAdminLogin =
 
     try {
       if (authMode === 'otp') {
+        if (!isSupabaseConfigured()) {
+          setShowKeyModal(true);
+          setIsLoading(false);
+          return;
+        }
         await signInWithOtp(email.trim());
         setOtpSent(true);
       } else {
@@ -253,21 +266,43 @@ export const LoginPage: React.FC<{ isAdminLogin?: boolean }> = ({ isAdminLogin =
                 </>
               )}
             </button>
+
+            {/* Quick Demo Login Option */}
+            <div className="pt-2">
+              <button
+                type="button"
+                onClick={() => handleDemoSignIn(isAdminLogin ? 'admin' : 'customer')}
+                className="w-full py-2.5 rounded-xl border border-dashed border-[#F5B51B] hover:bg-[#FFF8E7] text-[#07131A] text-xs font-bold transition-all flex items-center justify-center gap-2"
+              >
+                <ShieldCheck className="w-4 h-4 text-[#E9A817]" />
+                <span>
+                  {isAdminLogin ? 'Instant Demo Admin Sign-In' : 'Instant Demo Customer Sign-In'}
+                </span>
+              </button>
+            </div>
           </form>
         )}
 
         {/* Footer links */}
         <div className="pt-4 border-t border-gray-100 text-center space-y-3">
           {!isAdminLogin ? (
-            <p className="text-xs text-gray-500">
-              Don&apos;t have an account yet?{' '}
-              <Link
-                to={redirectParam ? `/signup?redirect=${encodeURIComponent(redirectParam)}` : '/signup'}
-                className="font-bold text-[#07131A] hover:underline"
-              >
-                Create an Account
-              </Link>
-            </p>
+            <>
+              <p className="text-xs text-gray-500">
+                Don&apos;t have an account yet?{' '}
+                <Link
+                  to={redirectParam ? `/signup?redirect=${encodeURIComponent(redirectParam)}` : '/signup'}
+                  className="font-bold text-[#07131A] hover:underline"
+                >
+                  Create an Account
+                </Link>
+              </p>
+              <p className="text-xs text-gray-400">
+                Restaurant staff or manager?{' '}
+                <Link to="/admin/login" className="font-semibold text-gray-600 hover:text-black hover:underline">
+                  Admin Portal Login &rarr;
+                </Link>
+              </p>
+            </>
           ) : (
             <p className="text-xs text-gray-500">
               Are you a customer?{' '}
@@ -283,9 +318,9 @@ export const LoginPage: React.FC<{ isAdminLogin?: boolean }> = ({ isAdminLogin =
       <SupabaseKeyModal
         isOpen={showKeyModal}
         onClose={() => setShowKeyModal(false)}
-        onContinueDemo={() => {
+        onContinueDemo={async () => {
           setShowKeyModal(false);
-          navigate(from);
+          await handleDemoSignIn(isAdminLogin || from.startsWith('/admin') ? 'admin' : 'customer');
         }}
       />
     </div>

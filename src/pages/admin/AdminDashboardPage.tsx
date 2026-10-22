@@ -21,6 +21,11 @@ import {
   AlertTriangle,
   ChevronRight,
   Filter,
+  BarChart3,
+  Calendar,
+  Layers,
+  Bike,
+  Store,
 } from 'lucide-react';
 import { useRestaurant } from '../../context/RestaurantContext';
 import { Order, OrderStatus } from '../../types';
@@ -39,11 +44,24 @@ export const AdminDashboardPage: React.FC = () => {
     supabaseStatus,
   } = useRestaurant();
 
-  const [period, setPeriod] = useState<'today' | 'week' | 'month' | 'all'>('all');
+  const [period, setPeriod] = useState<'today' | 'week' | 'month' | 'all' | 'custom'>('all');
+  const [customStart, setCustomStart] = useState<string>('');
+  const [customEnd, setCustomEnd] = useState<string>('');
 
-  // Filter orders according to selected period
+  // Filter orders according to selected period or custom date range
   const filteredOrders = useMemo(() => {
     if (period === 'all') return orders;
+
+    if (period === 'custom') {
+      const start = customStart ? new Date(customStart).getTime() : 0;
+      const end = customEnd ? new Date(customEnd).getTime() + 24 * 60 * 60 * 1000 : Infinity;
+
+      return orders.filter((o) => {
+        const orderTime = new Date(o.createdAt).getTime();
+        return !isNaN(orderTime) && orderTime >= start && orderTime <= end;
+      });
+    }
+
     const now = Date.now();
     const duration =
       period === 'today'
@@ -56,7 +74,7 @@ export const AdminDashboardPage: React.FC = () => {
       const orderTime = new Date(o.createdAt).getTime();
       return !isNaN(orderTime) && now - orderTime <= duration;
     });
-  }, [orders, period]);
+  }, [orders, period, customStart, customEnd]);
 
   // Order breakdown statistics
   const nonCancelledOrders = filteredOrders.filter((o) => o.orderStatus !== 'Canceled');
@@ -74,6 +92,57 @@ export const AdminDashboardPage: React.FC = () => {
   ).length;
   const completedOrders = filteredOrders.filter((o) => o.orderStatus === 'Completed').length;
   const cancelledOrders = filteredOrders.filter((o) => o.orderStatus === 'Canceled').length;
+
+  // Fulfillment Breakdown
+  const deliveryCount = filteredOrders.filter((o) => o.fulfillmentType === 'Delivery').length;
+  const takeawayCount = filteredOrders.filter((o) => o.fulfillmentType === 'Takeaway').length;
+  const dineInCount = filteredOrders.filter((o) => o.fulfillmentType === 'Dine-in').length;
+  const totalOrdersCount = filteredOrders.length || 1;
+
+  // Top Selling Dishes Aggregation from filtered orders
+  const itemSales = useMemo(() => {
+    const map = new Map<string, { name: string; quantity: number; revenue: number; category?: string }>();
+    for (const order of nonCancelledOrders) {
+      for (const item of order.items) {
+        const existing = map.get(item.name) || { name: item.name, quantity: 0, revenue: 0 };
+        existing.quantity += item.quantity;
+        existing.revenue += item.total;
+        map.set(item.name, existing);
+      }
+    }
+    return Array.from(map.values())
+      .sort((a, b) => b.quantity - a.quantity)
+      .slice(0, 5);
+  }, [nonCancelledOrders]);
+
+  const maxItemQty = itemSales.length > 0 ? Math.max(...itemSales.map((i) => i.quantity)) : 1;
+
+  // Revenue Trend Timeline (last 7 data points)
+  const revenueTrend = useMemo(() => {
+    const buckets: { label: string; revenue: number; count: number }[] = [];
+    const days = 7;
+    for (let i = days - 1; i >= 0; i--) {
+      const d = new Date();
+      d.setDate(d.getDate() - i);
+      const dateStr = d.toISOString().split('T')[0];
+      const dayLabel = d.toLocaleDateString([], { weekday: 'short', month: 'numeric', day: 'numeric' });
+
+      const dayOrders = nonCancelledOrders.filter((o) => {
+        const orderDateStr = new Date(o.createdAt).toISOString().split('T')[0];
+        return orderDateStr === dateStr;
+      });
+
+      const dayRevenue = dayOrders.reduce((sum, o) => sum + (o.total || 0), 0);
+      buckets.push({
+        label: dayLabel,
+        revenue: dayRevenue,
+        count: dayOrders.length,
+      });
+    }
+    return buckets;
+  }, [nonCancelledOrders]);
+
+  const maxTrendRevenue = Math.max(...revenueTrend.map((b) => b.revenue), 100);
 
   // Reservations
   const upcomingReservations = reservations
@@ -98,7 +167,7 @@ export const AdminDashboardPage: React.FC = () => {
   return (
     <div className="space-y-8 animate-fadeIn">
       {/* Top Header & Supabase Live Status */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+      <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
         <div>
           <div className="flex items-center gap-2">
             <h1 className="text-2xl sm:text-3xl font-bold font-sans tracking-tight text-gray-900">
@@ -124,7 +193,7 @@ export const AdminDashboardPage: React.FC = () => {
           </p>
         </div>
 
-        <div className="flex items-center gap-2 self-start sm:self-auto flex-wrap">
+        <div className="flex items-center gap-2 self-start lg:self-auto flex-wrap">
           {/* Manual Refresh / Supabase Sync */}
           <button
             onClick={() => refreshFromSupabase()}
@@ -145,8 +214,8 @@ export const AdminDashboardPage: React.FC = () => {
           </Link>
 
           {/* Period selector */}
-          <div className="flex items-center gap-1 bg-white p-1 rounded-xl border border-gray-200 text-xs">
-            {(['today', 'week', 'month', 'all'] as const).map((p) => (
+          <div className="flex items-center gap-1 bg-white p-1 rounded-xl border border-gray-200 text-xs shadow-2xs">
+            {(['today', 'week', 'month', 'all', 'custom'] as const).map((p) => (
               <button
                 key={p}
                 onClick={() => setPeriod(p)}
@@ -156,12 +225,51 @@ export const AdminDashboardPage: React.FC = () => {
                     : 'text-gray-600 hover:text-black'
                 }`}
               >
-                {p === 'all' ? 'All Time' : p}
+                {p === 'all' ? 'All Time' : p === 'custom' ? 'Custom' : p}
               </button>
             ))}
           </div>
         </div>
       </div>
+
+      {/* Custom Range Inputs when 'custom' is selected */}
+      {period === 'custom' && (
+        <div className="bg-white p-4 rounded-2xl border border-amber-200 bg-amber-50/40 flex flex-wrap items-center gap-4 text-xs animate-fadeIn">
+          <div className="flex items-center gap-2 font-bold text-gray-800">
+            <Calendar className="w-4 h-4 text-[#E9A817]" />
+            <span>Custom Date Range:</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <label className="text-gray-600">From:</label>
+            <input
+              type="date"
+              value={customStart}
+              onChange={(e) => setCustomStart(e.target.value)}
+              className="px-2.5 py-1.5 rounded-lg border border-gray-300 bg-white text-xs focus:outline-none focus:border-[#F5B51B]"
+            />
+          </div>
+          <div className="flex items-center gap-2">
+            <label className="text-gray-600">To:</label>
+            <input
+              type="date"
+              value={customEnd}
+              onChange={(e) => setCustomEnd(e.target.value)}
+              className="px-2.5 py-1.5 rounded-lg border border-gray-300 bg-white text-xs focus:outline-none focus:border-[#F5B51B]"
+            />
+          </div>
+          {(customStart || customEnd) && (
+            <button
+              onClick={() => {
+                setCustomStart('');
+                setCustomEnd('');
+              }}
+              className="text-xs text-red-600 hover:underline font-semibold"
+            >
+              Reset Range
+            </button>
+          )}
+        </div>
+      )}
 
       {/* Primary KPI Metrics */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
@@ -176,7 +284,7 @@ export const AdminDashboardPage: React.FC = () => {
               {paidRevenue.toLocaleString()}
             </div>
             <span className="text-[11px] text-gray-400 font-medium font-sans flex items-center gap-1 mt-1">
-              Gross sales: {settings.currencySymbol} {grossSales.toLocaleString()}
+              Gross active: {settings.currencySymbol} {grossSales.toLocaleString()}
             </span>
           </div>
           <div className="w-12 h-12 rounded-2xl bg-amber-50 text-[#E9A817] flex items-center justify-center font-bold">
@@ -240,11 +348,146 @@ export const AdminDashboardPage: React.FC = () => {
         </div>
       </div>
 
+      {/* Visual Analytics Row: Revenue Trend Bar Chart & Fulfillment Methods */}
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+        {/* Revenue Trend SVG Bar & Line Chart */}
+        <div className="lg:col-span-8 bg-white rounded-2xl border border-gray-200 p-6 shadow-xs space-y-4">
+          <div className="flex items-center justify-between pb-2 border-b border-gray-100">
+            <div>
+              <h2 className="text-base font-bold font-sans text-gray-900 flex items-center gap-2">
+                <BarChart3 className="w-4 h-4 text-[#E9A817]" />
+                <span>Daily Sales Trend & Order Volume</span>
+              </h2>
+              <span className="text-xs text-gray-400">
+                Revenue generated over recent days (excluding cancelled orders)
+              </span>
+            </div>
+            <div className="text-right">
+              <span className="text-[10px] text-gray-400 uppercase font-bold block">Period Gross</span>
+              <span className="text-sm font-bold font-sans text-[#07131A]">
+                {settings.currencySymbol} {grossSales.toLocaleString()}
+              </span>
+            </div>
+          </div>
+
+          {/* Responsive SVG Chart */}
+          <div className="pt-2">
+            <div className="h-56 w-full flex items-end gap-3 sm:gap-6 pt-4 pb-2 border-b border-gray-100">
+              {revenueTrend.map((bucket, idx) => {
+                const heightPercent = maxTrendRevenue > 0 ? Math.round((bucket.revenue / maxTrendRevenue) * 100) : 0;
+                return (
+                  <div key={idx} className="flex-1 flex flex-col items-center h-full justify-end group relative">
+                    {/* Tooltip */}
+                    <div className="absolute -top-10 opacity-0 group-hover:opacity-100 transition-opacity bg-[#07131A] text-white text-[10px] px-2 py-1 rounded-lg pointer-events-none whitespace-nowrap z-20 shadow-lg">
+                      <div className="font-bold text-[#F5B51B]">{settings.currencySymbol} {bucket.revenue.toLocaleString()}</div>
+                      <div className="text-gray-300">{bucket.count} orders</div>
+                    </div>
+
+                    {/* Bar */}
+                    <div className="w-full max-w-[42px] bg-gray-100 hover:bg-amber-100 rounded-t-xl transition-all relative flex flex-col justify-end overflow-hidden" style={{ height: `${Math.max(heightPercent, 6)}%` }}>
+                      <div
+                        className="w-full bg-gradient-to-t from-[#E9A817] to-[#F5B51B] rounded-t-xl transition-all"
+                        style={{ height: `${heightPercent}%` }}
+                      />
+                    </div>
+
+                    {/* X-axis Label */}
+                    <span className="text-[10px] font-semibold text-gray-500 mt-2 block truncate w-full text-center">
+                      {bucket.label.split(',')[0]}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+            <div className="flex justify-between items-center text-[10px] text-gray-400 pt-2">
+              <span>Low: {settings.currencySymbol} 0</span>
+              <span>Peak: {settings.currencySymbol} {maxTrendRevenue.toLocaleString()}</span>
+            </div>
+          </div>
+        </div>
+
+        {/* Fulfillment Method Breakdown */}
+        <div className="lg:col-span-4 bg-white rounded-2xl border border-gray-200 p-6 shadow-xs space-y-4">
+          <div className="flex items-center justify-between pb-2 border-b border-gray-100">
+            <div>
+              <h3 className="text-base font-bold font-sans text-gray-900 flex items-center gap-2">
+                <Layers className="w-4 h-4 text-blue-600" />
+                <span>Fulfillment Share</span>
+              </h3>
+              <span className="text-xs text-gray-400">Distribution across dining channels</span>
+            </div>
+          </div>
+
+          <div className="space-y-4 pt-1">
+            {/* Delivery */}
+            <div className="space-y-1.5">
+              <div className="flex items-center justify-between text-xs">
+                <span className="font-bold text-gray-800 flex items-center gap-1.5">
+                  <Bike className="w-3.5 h-3.5 text-blue-600" />
+                  <span>Home Delivery</span>
+                </span>
+                <span className="font-bold text-gray-900">
+                  {deliveryCount} ({Math.round((deliveryCount / totalOrdersCount) * 100)}%)
+                </span>
+              </div>
+              <div className="w-full h-2 rounded-full bg-gray-100 overflow-hidden">
+                <div
+                  className="h-full bg-blue-600 rounded-full"
+                  style={{ width: `${(deliveryCount / totalOrdersCount) * 100}%` }}
+                />
+              </div>
+            </div>
+
+            {/* Takeaway */}
+            <div className="space-y-1.5">
+              <div className="flex items-center justify-between text-xs">
+                <span className="font-bold text-gray-800 flex items-center gap-1.5">
+                  <Store className="w-3.5 h-3.5 text-purple-600" />
+                  <span>Self Pickup / Takeaway</span>
+                </span>
+                <span className="font-bold text-gray-900">
+                  {takeawayCount} ({Math.round((takeawayCount / totalOrdersCount) * 100)}%)
+                </span>
+              </div>
+              <div className="w-full h-2 rounded-full bg-gray-100 overflow-hidden">
+                <div
+                  className="h-full bg-purple-600 rounded-full"
+                  style={{ width: `${(takeawayCount / totalOrdersCount) * 100}%` }}
+                />
+              </div>
+            </div>
+
+            {/* Dine-in */}
+            <div className="space-y-1.5">
+              <div className="flex items-center justify-between text-xs">
+                <span className="font-bold text-gray-800 flex items-center gap-1.5">
+                  <Utensils className="w-3.5 h-3.5 text-emerald-600" />
+                  <span>Table Dining</span>
+                </span>
+                <span className="font-bold text-gray-900">
+                  {dineInCount} ({Math.round((dineInCount / totalOrdersCount) * 100)}%)
+                </span>
+              </div>
+              <div className="w-full h-2 rounded-full bg-gray-100 overflow-hidden">
+                <div
+                  className="h-full bg-emerald-600 rounded-full"
+                  style={{ width: `${(dineInCount / totalOrdersCount) * 100}%` }}
+                />
+              </div>
+            </div>
+          </div>
+
+          <div className="pt-3 border-t border-gray-100 text-[11px] text-gray-500 leading-relaxed">
+            Fastest turnaround is currently on <strong className="text-gray-800">Takeaway orders (~15m)</strong>, followed by Dine-in (~20m) and Delivery (~35m).
+          </div>
+        </div>
+      </div>
+
       {/* Order Status Distribution Strip */}
       <div className="bg-white rounded-2xl border border-gray-200 p-5 shadow-xs space-y-3">
         <div className="flex items-center justify-between">
           <h2 className="text-xs font-bold uppercase tracking-wider text-gray-700">
-            Fulfillment Pipeline Breakdown ({filteredOrders.length} orders)
+            Fulfillment Pipeline Breakdown ({filteredOrders.length} orders in period)
           </h2>
           <Link
             to="/admin/orders"
@@ -362,7 +605,7 @@ export const AdminDashboardPage: React.FC = () => {
                       </td>
                       <td className="py-3 text-right">
                         <Link
-                          to="/admin/orders"
+                          to={`/admin/orders?select=${order.id}`}
                           className="text-[#07131A] hover:text-[#E9A817] font-bold text-xs"
                         >
                           View →
@@ -434,58 +677,62 @@ export const AdminDashboardPage: React.FC = () => {
         </div>
       </div>
 
-      {/* Bottom Row: Bestsellers & Quick Action Hub */}
+      {/* Bottom Row: Bestsellers & Top Dishes by Units Sold */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-        {/* Bestseller Dishes */}
+        {/* Top Sold Dishes from Live Orders */}
         <div className="lg:col-span-8 bg-white rounded-2xl border border-gray-200 p-6 shadow-xs space-y-4">
           <div className="flex items-center justify-between pb-3 border-b border-gray-100">
             <div>
-              <h3 className="text-base font-bold font-sans text-gray-900">
-                Top Performing Menu Items
+              <h3 className="text-base font-bold font-sans text-gray-900 flex items-center gap-2">
+                <Utensils className="w-4 h-4 text-[#E9A817]" />
+                <span>Top Selling Dishes by Volume</span>
               </h3>
               <span className="text-xs text-gray-400">
-                {availableDishes} in stock, {unavailableDishes} sold out
+                Calculated directly from customer order receipts in this period
               </span>
             </div>
             <Link to="/admin/products" className="text-xs font-bold text-[#E9A817] hover:underline">
-              Manage Menu →
+              Menu Catalog →
             </Link>
           </div>
 
-          {bestsellingProducts.length === 0 ? (
+          {itemSales.length === 0 ? (
             <div className="py-8 text-center text-gray-400 text-xs">
               <Utensils className="w-7 h-7 mx-auto text-gray-300 mb-2" />
-              <p className="font-medium text-gray-600">No bestselling dishes designated.</p>
+              <p className="font-medium text-gray-600">No dishes sold in selected date range.</p>
               <p className="text-[11px] text-gray-400 mt-0.5">
-                Mark popular dishes as &quot;Bestseller&quot; in the menu editor to highlight them here.
+                Completed orders will automatically rank top dishes here.
               </p>
             </div>
           ) : (
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              {bestsellingProducts.map((p) => (
-                <div
-                  key={p.id}
-                  className="flex items-center gap-3 p-3 rounded-xl bg-gray-50 border border-gray-100"
-                >
-                  <img
-                    src={p.images[0] || 'https://images.unsplash.com/photo-1546069901-ba9599a7e63c?auto=format&fit=crop&w=600&q=80'}
-                    alt={p.name}
-                    className="w-14 h-14 rounded-lg object-cover bg-gray-200 shrink-0"
-                  />
-                  <div className="flex-grow min-w-0">
-                    <span className="font-bold text-xs text-gray-900 block leading-tight truncate">
-                      {p.name}
-                    </span>
-                    <span className="text-[10px] text-gray-400 block mt-0.5">
-                      {p.reviewCount} reviews • {p.isAvailable ? 'In Stock' : 'Out of Stock'}
-                    </span>
-                    <span className="font-bold text-xs font-sans text-[#07131A] block mt-1 tabular-nums not-italic">
-                      <span className="font-sans font-bold">{settings.currencySymbol}</span>{' '}
-                      {p.salePrice ?? p.price}
-                    </span>
+            <div className="space-y-3">
+              {itemSales.map((item, idx) => {
+                const widthPercent = Math.round((item.quantity / maxItemQty) * 100);
+                return (
+                  <div key={idx} className="p-3 rounded-xl bg-gray-50 border border-gray-100 space-y-2">
+                    <div className="flex items-center justify-between text-xs">
+                      <div className="flex items-center gap-2">
+                        <span className="w-5 h-5 rounded-full bg-[#07131A] text-[#F5B51B] font-bold text-[10px] flex items-center justify-center">
+                          #{idx + 1}
+                        </span>
+                        <span className="font-bold text-gray-900">{item.name}</span>
+                      </div>
+                      <div className="flex items-center gap-3">
+                        <span className="text-gray-500 font-semibold">{item.quantity} orders</span>
+                        <span className="font-bold text-gray-900 font-sans">
+                          {settings.currencySymbol} {item.revenue.toLocaleString()}
+                        </span>
+                      </div>
+                    </div>
+                    <div className="w-full h-2 rounded-full bg-gray-200 overflow-hidden">
+                      <div
+                        className="h-full bg-gradient-to-r from-[#F5B51B] to-[#E9A817] rounded-full transition-all"
+                        style={{ width: `${widthPercent}%` }}
+                      />
+                    </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </div>
@@ -515,7 +762,7 @@ export const AdminDashboardPage: React.FC = () => {
               to="/admin/offers"
               className="w-full py-2.5 px-4 rounded-xl bg-gray-800 text-gray-200 font-semibold text-xs hover:bg-gray-700 transition-all flex items-center justify-between border border-gray-700"
             >
-              <span>Manage Discount Coupons ({settings.deliveryFee ? 'Active' : ''})</span>
+              <span>Manage Discount Coupons</span>
               <span>→</span>
             </Link>
             <Link

@@ -220,6 +220,30 @@ export const orderService = {
     }
   },
 
+  archiveOrder: async (orderId: string): Promise<void> => {
+    if (!isSupabaseConfigured()) return;
+    const { error } = await supabase
+      .from('orders')
+      .update({ is_archived: true, archived_at: new Date().toISOString() })
+      .eq('id', orderId);
+    if (error) {
+      console.error('Failed to archive order in Supabase:', error.message);
+      throw new Error(error.message);
+    }
+  },
+
+  unarchiveOrder: async (orderId: string): Promise<void> => {
+    if (!isSupabaseConfigured()) return;
+    const { error } = await supabase
+      .from('orders')
+      .update({ is_archived: false, archived_at: null })
+      .eq('id', orderId);
+    if (error) {
+      console.error('Failed to unarchive order in Supabase:', error.message);
+      throw new Error(error.message);
+    }
+  },
+
   deleteOrder: async (orderId: string): Promise<void> => {
     if (!isSupabaseConfigured()) return;
     const { error } = await supabase.from('orders').delete().eq('id', orderId);
@@ -250,6 +274,9 @@ export function formatOrderFromRow(row: any): Order {
     estimatedDeliveryMinutes: row.estimated_delivery_minutes || 35,
     riderName: row.rider_name || undefined,
     riderPhone: row.rider_phone || undefined,
+    userId: row.user_id || undefined,
+    isArchived: Boolean(row.is_archived),
+    archivedAt: row.archived_at || undefined,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
