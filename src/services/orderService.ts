@@ -245,6 +245,27 @@ export const orderService = {
     if (riderInfo?.riderName !== undefined) payload.rider_name = riderInfo.riderName;
     if (riderInfo?.riderPhone !== undefined) payload.rider_phone = riderInfo.riderPhone;
 
+    // Update local storage representation immediately
+    if (typeof window !== 'undefined') {
+      try {
+        const local = getLocalOrders();
+        const updated = local.map((o) =>
+          o.id === orderId || o.orderNumber === orderId
+            ? {
+                ...o,
+                orderStatus: status,
+                riderName: riderInfo?.riderName ?? o.riderName,
+                riderPhone: riderInfo?.riderPhone ?? o.riderPhone,
+                updatedAt: payload.updated_at,
+              }
+            : o
+        );
+        localStorage.setItem(STORAGE_ORDERS_KEY, JSON.stringify(updated));
+      } catch (err) {
+        console.warn('Local storage order update error:', err);
+      }
+    }
+
     const { error } = await supabase
       .from('orders')
       .update(payload)
@@ -297,6 +318,15 @@ export const orderService = {
   },
 
   archiveOrder: async (orderId: string): Promise<void> => {
+    if (typeof window !== 'undefined') {
+      try {
+        const local = getLocalOrders();
+        const updated = local.map((o) =>
+          o.id === orderId ? { ...o, isArchived: true, archivedAt: new Date().toISOString() } : o
+        );
+        localStorage.setItem(STORAGE_ORDERS_KEY, JSON.stringify(updated));
+      } catch {}
+    }
     if (!isSupabaseConfigured()) return;
     const { error } = await supabase
       .from('orders')
@@ -309,6 +339,15 @@ export const orderService = {
   },
 
   unarchiveOrder: async (orderId: string): Promise<void> => {
+    if (typeof window !== 'undefined') {
+      try {
+        const local = getLocalOrders();
+        const updated = local.map((o) =>
+          o.id === orderId ? { ...o, isArchived: false, archivedAt: undefined } : o
+        );
+        localStorage.setItem(STORAGE_ORDERS_KEY, JSON.stringify(updated));
+      } catch {}
+    }
     if (!isSupabaseConfigured()) return;
     const { error } = await supabase
       .from('orders')
@@ -321,6 +360,12 @@ export const orderService = {
   },
 
   deleteOrder: async (orderId: string): Promise<void> => {
+    if (typeof window !== 'undefined') {
+      try {
+        const local = getLocalOrders();
+        localStorage.setItem(STORAGE_ORDERS_KEY, JSON.stringify(local.filter((o) => o.id !== orderId && o.orderNumber !== orderId)));
+      } catch {}
+    }
     if (!isSupabaseConfigured()) return;
     const { error } = await supabase.from('orders').delete().eq('id', orderId);
     if (error) {

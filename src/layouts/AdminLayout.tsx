@@ -280,10 +280,15 @@ export const AdminLayout: React.FC = () => {
             >
               <Menu className="w-5 h-5" />
             </button>
-            <div className="hidden sm:flex items-center gap-2 text-xs font-semibold px-2.5 py-1 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200">
-              <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
-              <span>Live Operations • Supabase Connected</span>
-            </div>
+            <button
+              onClick={() => refreshFromSupabase()}
+              disabled={isSyncing}
+              className="hidden sm:flex items-center gap-2 text-xs font-semibold px-2.5 py-1 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100 transition-colors cursor-pointer"
+              title="Real-time multi-tab sync active. Click to force instant cloud refresh."
+            >
+              <span className={`w-2 h-2 rounded-full ${isSyncing ? 'bg-amber-500 animate-ping' : 'bg-emerald-500 animate-pulse'}`}></span>
+              <span>{isSyncing ? 'Syncing Cloud...' : 'Real-time Live • Auto-Sync'}</span>
+            </button>
           </div>
 
           <div className="flex items-center gap-3 sm:gap-4">

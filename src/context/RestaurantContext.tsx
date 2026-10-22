@@ -41,6 +41,7 @@ import { activityService } from '../services/activityService';
 import { notificationService } from '../services/notificationService';
 import { authService, UserProfile } from '../services/authService';
 import { useAuth } from './AuthContext';
+import { broadcastRealtimeEvent, subscribeToRealtimeSync } from '../lib/realtimeSync';
 
 interface ToastInfo {
   id: string;
@@ -347,111 +348,303 @@ export const RestaurantProvider: React.FC<{ children: ReactNode }> = ({ children
     refreshFromSupabase();
   }, [user?.id, role, isAdmin]);
 
-  // Real-time Supabase Database Subscriptions
+  // Real-time synchronization across tabs, browsers, and remote devices
   useEffect(() => {
-    if (!isSupabaseConfigured()) return;
+    // 1. Subscribe to Realtime Bus (Browser BroadcastChannel + Supabase WebSocket broadcast)
+    const unsubscribeBus = subscribeToRealtimeSync((msg) => {
+      switch (msg.type) {
+        case 'ORDER_CREATED': {
+          const newOrder = msg.payload as Order;
+          setOrders((prev) => [newOrder, ...prev.filter((o) => o.id !== newOrder.id)]);
+          if (isAdmin) {
+            playNotificationSound();
+            showToast(`New Live Order #${newOrder.orderNumber} received!`, 'success');
+          } else if (user?.id && newOrder.userId === user.id) {
+            showToast(`Order #${newOrder.orderNumber} updated!`, 'info');
+          }
+          break;
+        }
 
-    const channel = supabase
-      .channel('dem_restaurant_realtime_channel')
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'orders' },
-        (payload) => {
-          if (payload.eventType === 'INSERT') {
-            const newOrder = formatOrderFromRow(payload.new);
-            setOrders((prev) => [newOrder, ...prev.filter((o) => o.id !== newOrder.id)]);
-            if (isAdmin) {
-              playNotificationSound();
-              showToast(`New Live Order #${newOrder.orderNumber} received!`, 'success');
+        case 'ORDER_UPDATED': {
+          const { orderId, status, riderInfo, updatedAt } = msg.payload;
+          setOrders((prev) =>
+            prev.map((o) => {
+              if (o.id === orderId || o.orderNumber === orderId) {
+                return {
+                  ...o,
+                  orderStatus: status,
+                  riderName: riderInfo?.riderName !== undefined ? riderInfo.riderName : o.riderName,
+                  riderPhone: riderInfo?.riderPhone !== undefined ? riderInfo.riderPhone : o.riderPhone,
+                  updatedAt: updatedAt || new Date().toISOString(),
+                };
+              }
+              return o;
+            })
+          );
+          break;
+        }
+
+        case 'ORDER_ARCHIVED': {
+          const { orderId, isArchived } = msg.payload;
+          setOrders((prev) =>
+            prev.map((o) => (o.id === orderId ? { ...o, isArchived } : o))
+          );
+          break;
+        }
+
+        case 'ORDER_DELETED': {
+          const { orderId } = msg.payload;
+          setOrders((prev) => prev.filter((o) => o.id !== orderId));
+          break;
+        }
+
+        case 'RESERVATION_CREATED': {
+          const newRes = msg.payload as Reservation;
+          setReservations((prev) => [newRes, ...prev.filter((r) => r.id !== newRes.id)]);
+          if (isAdmin) {
+            playNotificationSound();
+            showToast(`New Table Reservation #${newRes.referenceNumber}!`, 'info');
+          }
+          break;
+        }
+
+        case 'RESERVATION_UPDATED': {
+          const { id, status, tableAssigned, updatedAt } = msg.payload;
+          setReservations((prev) =>
+            prev.map((r) =>
+              r.id === id
+                ? {
+                    ...r,
+                    status,
+                    tableAssigned: tableAssigned !== undefined ? tableAssigned : r.tableAssigned,
+                    updatedAt: updatedAt || new Date().toISOString(),
+                  }
+                : r
+            )
+          );
+          break;
+        }
+
+        case 'RESERVATION_DELETED': {
+          const { id } = msg.payload;
+          setReservations((prev) => prev.filter((r) => r.id !== id));
+          break;
+        }
+
+        case 'REVIEW_CREATED': {
+          const newRev = msg.payload as Review;
+          setReviews((prev) => [newRev, ...prev.filter((r) => r.id !== newRev.id)]);
+          if (isAdmin) {
+            showToast(`New customer review posted: ${newRev.rating}★`, 'info');
+          }
+          break;
+        }
+
+        case 'REVIEW_UPDATED': {
+          const updates = msg.payload;
+          setReviews((prev) =>
+            prev.map((r) => (r.id === updates.id ? { ...r, ...updates } : r))
+          );
+          break;
+        }
+
+        case 'REVIEW_DELETED': {
+          const { id } = msg.payload;
+          setReviews((prev) => prev.filter((r) => r.id !== id));
+          break;
+        }
+
+        case 'NOTIFICATION_CREATED': {
+          const notif = msg.payload as NotificationItem;
+          if (isAdmin || !notif.userId || notif.userId === user?.id) {
+            setNotifications((prev) => [notif, ...prev.filter((n) => n.id !== notif.id)]);
+            playNotificationSound();
+          }
+          break;
+        }
+
+        case 'NOTIFICATIONS_READ': {
+          const { id, all, userId: targetUid } = msg.payload;
+          if (all) {
+            if (isAdmin || !targetUid || targetUid === user?.id) {
+              setNotifications((prev) => prev.map((n) => ({ ...n, read: true })));
             }
-          } else if (payload.eventType === 'UPDATE') {
-            const updated = formatOrderFromRow(payload.new);
-            setOrders((prev) => prev.map((o) => (o.id === updated.id ? updated : o)));
-          } else if (payload.eventType === 'DELETE') {
-            setOrders((prev) => prev.filter((o) => o.id !== payload.old.id));
-          }
-        }
-      )
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'reservations' },
-        (payload) => {
-          if (payload.eventType === 'INSERT') {
-            const newRes = formatReservationRow(payload.new);
-            setReservations((prev) => [newRes, ...prev.filter((r) => r.id !== newRes.id)]);
-            if (isAdmin) {
-              playNotificationSound();
-              showToast(`New Table Reservation #${newRes.referenceNumber}!`, 'info');
-            }
-          } else if (payload.eventType === 'UPDATE') {
-            const updated = formatReservationRow(payload.new);
-            setReservations((prev) => prev.map((r) => (r.id === updated.id ? updated : r)));
-          }
-        }
-      )
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'reviews' },
-        (payload) => {
-          if (payload.eventType === 'INSERT') {
-            const newRev = formatReviewRow(payload.new);
-            setReviews((prev) => [newRev, ...prev.filter((r) => r.id !== newRev.id)]);
-          } else if (payload.eventType === 'UPDATE') {
-            const updated = formatReviewRow(payload.new);
-            setReviews((prev) => prev.map((r) => (r.id === updated.id ? updated : r)));
-          } else if (payload.eventType === 'DELETE') {
-            setReviews((prev) => prev.filter((r) => r.id !== payload.old.id));
-          }
-        }
-      )
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'products' },
-        (payload) => {
-          if (payload.eventType === 'INSERT' || payload.eventType === 'UPDATE') {
-            productService.fetchProducts().then((data) => {
-              if (data) setProducts(data);
-            });
-          } else if (payload.eventType === 'DELETE') {
-            setProducts((prev) => prev.filter((p) => p.id !== payload.old.id));
-          }
-        }
-      )
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'notifications' },
-        (payload) => {
-          if (payload.eventType === 'INSERT') {
-            const row = payload.new;
-            if (isAdmin || !row.user_id || row.user_id === user?.id) {
-              const newNotif: NotificationItem = {
-                id: String(row.id),
-                userId: row.user_id || undefined,
-                title: row.title,
-                message: row.message,
-                type: row.type || 'system',
-                link: row.link || undefined,
-                relatedEntityId: row.related_entity_id || undefined,
-                read: Boolean(row.is_read),
-                createdAt: row.created_at || new Date().toISOString(),
-              };
-              setNotifications((prev) => [newNotif, ...prev.filter((n) => n.id !== newNotif.id)]);
-              playNotificationSound();
-            }
-          } else if (payload.eventType === 'UPDATE') {
-            const row = payload.new;
+          } else if (id) {
             setNotifications((prev) =>
-              prev.map((n) =>
-                n.id === String(row.id) ? { ...n, read: Boolean(row.is_read) } : n
-              )
+              prev.map((n) => (n.id === id ? { ...n, read: true } : n))
             );
           }
+          break;
         }
-      )
-      .subscribe();
+
+        case 'FORCE_SYNC': {
+          refreshFromSupabase();
+          break;
+        }
+      }
+    });
+
+    // 2. Direct Supabase Postgres Replication Channel
+    let pgChannel: ReturnType<typeof supabase.channel> | null = null;
+    if (isSupabaseConfigured()) {
+      try {
+        pgChannel = supabase
+          .channel('dem_restaurant_postgres_replication')
+          .on(
+            'postgres_changes',
+            { event: '*', schema: 'public', table: 'orders' },
+            (payload) => {
+              if (payload.eventType === 'INSERT') {
+                const newOrder = formatOrderFromRow(payload.new);
+                setOrders((prev) => [newOrder, ...prev.filter((o) => o.id !== newOrder.id)]);
+                if (isAdmin) {
+                  playNotificationSound();
+                  showToast(`New Live Order #${newOrder.orderNumber} received!`, 'success');
+                }
+              } else if (payload.eventType === 'UPDATE') {
+                const updated = formatOrderFromRow(payload.new);
+                setOrders((prev) => prev.map((o) => (o.id === updated.id ? updated : o)));
+              } else if (payload.eventType === 'DELETE') {
+                setOrders((prev) => prev.filter((o) => o.id !== payload.old.id));
+              }
+            }
+          )
+          .on(
+            'postgres_changes',
+            { event: '*', schema: 'public', table: 'reservations' },
+            (payload) => {
+              if (payload.eventType === 'INSERT') {
+                const newRes = formatReservationRow(payload.new);
+                setReservations((prev) => [newRes, ...prev.filter((r) => r.id !== newRes.id)]);
+                if (isAdmin) {
+                  playNotificationSound();
+                  showToast(`New Table Reservation #${newRes.referenceNumber}!`, 'info');
+                }
+              } else if (payload.eventType === 'UPDATE') {
+                const updated = formatReservationRow(payload.new);
+                setReservations((prev) => prev.map((r) => (r.id === updated.id ? updated : r)));
+              }
+            }
+          )
+          .on(
+            'postgres_changes',
+            { event: '*', schema: 'public', table: 'reviews' },
+            (payload) => {
+              if (payload.eventType === 'INSERT') {
+                const newRev = formatReviewRow(payload.new);
+                setReviews((prev) => [newRev, ...prev.filter((r) => r.id !== newRev.id)]);
+              } else if (payload.eventType === 'UPDATE') {
+                const updated = formatReviewRow(payload.new);
+                setReviews((prev) => prev.map((r) => (r.id === updated.id ? updated : r)));
+              } else if (payload.eventType === 'DELETE') {
+                setReviews((prev) => prev.filter((r) => r.id !== payload.old.id));
+              }
+            }
+          )
+          .on(
+            'postgres_changes',
+            { event: '*', schema: 'public', table: 'products' },
+            (payload) => {
+              if (payload.eventType === 'INSERT' || payload.eventType === 'UPDATE') {
+                productService.fetchProducts().then((data) => {
+                  if (data) setProducts(data);
+                });
+              } else if (payload.eventType === 'DELETE') {
+                setProducts((prev) => prev.filter((p) => p.id !== payload.old.id));
+              }
+            }
+          )
+          .subscribe();
+      } catch (err) {
+        console.warn('Postgres replication channel setup notice:', err);
+      }
+    }
+
+    // 3. Tab Visibility & Focus immediate freshness trigger
+    const handleVisibilityOrFocus = () => {
+      if (document.visibilityState === 'visible') {
+        refreshFromSupabase();
+      }
+    };
+    window.addEventListener('visibilitychange', handleVisibilityOrFocus);
+    window.addEventListener('focus', handleVisibilityOrFocus);
+
+    // 4. Background freshness poller (silent sync every 5 seconds)
+    const backgroundPoller = setInterval(async () => {
+      if (!isSupabaseConfigured()) return;
+      try {
+        const fetchedOrders = isAdmin
+          ? await orderService.fetchOrders()
+          : user?.id
+          ? await orderService.fetchCustomerOrders(user.id)
+          : null;
+
+        if (fetchedOrders && fetchedOrders.length > 0) {
+          setOrders((prev) => {
+            const prevIds = new Set(prev.map((o) => o.id));
+            const brandNewOrders = fetchedOrders.filter((o) => !prevIds.has(o.id));
+
+            if (brandNewOrders.length > 0 && isAdmin) {
+              playNotificationSound();
+              showToast(`New Live Order #${brandNewOrders[0].orderNumber} received!`, 'success');
+            }
+
+            // Detect if status or rider assignment changed remotely
+            let hasChanged = brandNewOrders.length > 0;
+            if (!hasChanged) {
+              const currentMap = new Map(prev.map((o) => [o.id, o]));
+              for (const f of fetchedOrders) {
+                const match = currentMap.get(f.id);
+                if (
+                  !match ||
+                  match.orderStatus !== f.orderStatus ||
+                  match.paymentStatus !== f.paymentStatus ||
+                  match.riderName !== f.riderName ||
+                  match.isArchived !== f.isArchived
+                ) {
+                  hasChanged = true;
+                  break;
+                }
+              }
+            }
+
+            return hasChanged ? fetchedOrders : prev;
+          });
+        }
+
+        // Silent reservation sync for admin
+        if (isAdmin) {
+          const fetchedRes = await reservationService.fetchReservations();
+          if (fetchedRes) {
+            setReservations((prev) => {
+              const prevIds = new Set(prev.map((r) => r.id));
+              const brandNew = fetchedRes.filter((r) => !prevIds.has(r.id));
+              if (brandNew.length > 0) {
+                playNotificationSound();
+                showToast(`New Table Reservation #${brandNew[0].referenceNumber}!`, 'info');
+                return fetchedRes;
+              }
+              const hasChange = fetchedRes.some((f) => {
+                const existing = prev.find((r) => r.id === f.id);
+                return existing && (existing.status !== f.status || existing.tableAssigned !== f.tableAssigned);
+              });
+              return hasChange ? fetchedRes : prev;
+            });
+          }
+        }
+      } catch {
+        // Quietly absorb background poll errors
+      }
+    }, 5000);
 
     return () => {
-      supabase.removeChannel(channel);
+      unsubscribeBus();
+      if (pgChannel) {
+        supabase.removeChannel(pgChannel);
+      }
+      window.removeEventListener('visibilitychange', handleVisibilityOrFocus);
+      window.removeEventListener('focus', handleVisibilityOrFocus);
+      clearInterval(backgroundPoller);
     };
   }, [user?.id, isAdmin]);
 
@@ -497,6 +690,9 @@ export const RestaurantProvider: React.FC<{ children: ReactNode }> = ({ children
     };
     setNotifications((prev) => [newNotif, ...prev]);
 
+    // Broadcast in real-time to other tabs and connected admin devices
+    broadcastRealtimeEvent('NOTIFICATION_CREATED', newNotif);
+
     // Persist to Supabase if configured
     notificationService
       .createNotification({
@@ -521,11 +717,13 @@ export const RestaurantProvider: React.FC<{ children: ReactNode }> = ({ children
     setNotifications((prev) =>
       prev.map((n) => (n.id === id ? { ...n, read: true } : n))
     );
+    broadcastRealtimeEvent('NOTIFICATIONS_READ', { id, all: false });
     await notificationService.markAsRead(id);
   };
 
   const markAllNotificationsRead = async () => {
     setNotifications((prev) => prev.map((n) => ({ ...n, read: true })));
+    broadcastRealtimeEvent('NOTIFICATIONS_READ', { all: true, userId: user?.id });
     await notificationService.markAllAsRead(user?.id);
     showToast('All notifications marked as read', 'info');
   };
@@ -714,6 +912,9 @@ export const RestaurantProvider: React.FC<{ children: ReactNode }> = ({ children
       const createdOrder = await orderService.createOrder(orderData, user.id);
       setOrders((prev) => [createdOrder, ...prev.filter((o) => o.id !== createdOrder.id)]);
 
+      // Broadcast order in real time to all tabs and admin portals
+      broadcastRealtimeEvent('ORDER_CREATED', createdOrder);
+
       // Update coupon usage if used
       if (createdOrder.couponCode) {
         setCoupons((prev) =>
@@ -766,6 +967,7 @@ export const RestaurantProvider: React.FC<{ children: ReactNode }> = ({ children
   ) => {
     let orderNum = '';
     let targetUserId = '';
+    const nowIso = new Date().toISOString();
     setOrders((prev) =>
       prev.map((order) => {
         if (order.id === orderId || order.orderNumber === orderId) {
@@ -776,12 +978,20 @@ export const RestaurantProvider: React.FC<{ children: ReactNode }> = ({ children
             orderStatus: status,
             riderName: riderInfo?.riderName ?? order.riderName,
             riderPhone: riderInfo?.riderPhone ?? order.riderPhone,
-            updatedAt: new Date().toISOString(),
+            updatedAt: nowIso,
           };
         }
         return order;
       })
     );
+
+    // Broadcast status change immediately to all tabs, customer tracking, and admin views
+    broadcastRealtimeEvent('ORDER_UPDATED', {
+      orderId,
+      status,
+      riderInfo,
+      updatedAt: nowIso,
+    });
 
     // Sync to Supabase
     orderService.updateOrderStatus(orderId, status, riderInfo);
@@ -836,6 +1046,7 @@ export const RestaurantProvider: React.FC<{ children: ReactNode }> = ({ children
           : o
       )
     );
+    broadcastRealtimeEvent('ORDER_ARCHIVED', { orderId, isArchived: true });
     await orderService.archiveOrder(orderId);
     addActivityLog('Order Archived', `Order #${orderId} removed from active management list`, 'order');
     showToast('Order safely archived from active list');
@@ -849,6 +1060,7 @@ export const RestaurantProvider: React.FC<{ children: ReactNode }> = ({ children
           : o
       )
     );
+    broadcastRealtimeEvent('ORDER_ARCHIVED', { orderId, isArchived: false });
     await orderService.unarchiveOrder(orderId);
     addActivityLog('Order Restored', `Order #${orderId} restored to active management list`, 'order');
     showToast('Order restored to active list');
@@ -856,6 +1068,7 @@ export const RestaurantProvider: React.FC<{ children: ReactNode }> = ({ children
 
   const deleteOrder = (orderId: string) => {
     setOrders((prev) => prev.filter((o) => o.id !== orderId));
+    broadcastRealtimeEvent('ORDER_DELETED', { orderId });
     orderService.deleteOrder(orderId);
     showToast('Order record removed.', 'info');
   };
@@ -954,6 +1167,7 @@ export const RestaurantProvider: React.FC<{ children: ReactNode }> = ({ children
       updatedAt: new Date().toISOString(),
     };
     setReservations((prev) => [newReservation, ...prev]);
+    broadcastRealtimeEvent('RESERVATION_CREATED', newReservation);
     reservationService.createReservation(resData, user?.id);
 
     addActivityLog(
@@ -991,6 +1205,7 @@ export const RestaurantProvider: React.FC<{ children: ReactNode }> = ({ children
     tableAssigned?: string
   ) => {
     let targetRef = '';
+    const nowIso = new Date().toISOString();
     setReservations((prev) =>
       prev.map((r) => {
         if (r.id === id) {
@@ -999,12 +1214,20 @@ export const RestaurantProvider: React.FC<{ children: ReactNode }> = ({ children
             ...r,
             status,
             tableAssigned: tableAssigned ?? r.tableAssigned,
-            updatedAt: new Date().toISOString(),
+            updatedAt: nowIso,
           };
         }
         return r;
       })
     );
+
+    broadcastRealtimeEvent('RESERVATION_UPDATED', {
+      id,
+      status,
+      tableAssigned,
+      updatedAt: nowIso,
+    });
+
     reservationService.updateReservationStatus(id, status, tableAssigned);
     addActivityLog('Reservation Status Updated', `Booking #${targetRef || id} marked as "${status}"`, 'reservation');
 
@@ -1022,6 +1245,7 @@ export const RestaurantProvider: React.FC<{ children: ReactNode }> = ({ children
 
   const deleteReservation = (id: string) => {
     setReservations((prev) => prev.filter((r) => r.id !== id));
+    broadcastRealtimeEvent('RESERVATION_DELETED', { id });
     reservationService.deleteReservation(id);
     showToast('Reservation deleted', 'info');
   };
@@ -1038,6 +1262,7 @@ export const RestaurantProvider: React.FC<{ children: ReactNode }> = ({ children
     try {
       const created = await reviewService.createReview(reviewData, user.id);
       setReviews((prev) => [created, ...prev.filter((r) => r.id !== created.id)]);
+      broadcastRealtimeEvent('REVIEW_CREATED', created);
       addActivityLog('New Customer Review', `${created.authorName} left a ${created.rating}★ rating`, 'review');
 
       // Notify administrator
@@ -1061,13 +1286,20 @@ export const RestaurantProvider: React.FC<{ children: ReactNode }> = ({ children
     try {
       await reviewService.respondToReview(id, responseText, user?.id);
       const targetRev = reviews.find((r) => r.id === id);
+      const nowIso = new Date().toISOString();
       setReviews((prev) =>
         prev.map((r) =>
           r.id === id
-            ? { ...r, adminResponse: responseText.trim(), adminRespondedAt: new Date().toISOString() }
+            ? { ...r, adminResponse: responseText.trim(), adminRespondedAt: nowIso }
             : r
         )
       );
+
+      broadcastRealtimeEvent('REVIEW_UPDATED', {
+        id,
+        adminResponse: responseText.trim(),
+        adminRespondedAt: nowIso,
+      });
 
       // Notify customer of manager reply
       pushNotification(
@@ -1091,10 +1323,12 @@ export const RestaurantProvider: React.FC<{ children: ReactNode }> = ({ children
     if (!rev) return;
     try {
       await reviewService.toggleApproval(id, rev.isApproved);
+      const nextApproved = !rev.isApproved;
       setReviews((prev) =>
-        prev.map((r) => (r.id === id ? { ...r, isApproved: !r.isApproved } : r))
+        prev.map((r) => (r.id === id ? { ...r, isApproved: nextApproved } : r))
       );
-      showToast(`Review visibility updated to ${!rev.isApproved ? 'Visible' : 'Hidden'}`);
+      broadcastRealtimeEvent('REVIEW_UPDATED', { id, isApproved: nextApproved });
+      showToast(`Review visibility updated to ${nextApproved ? 'Visible' : 'Hidden'}`);
     } catch (err: any) {
       showToast('Failed to update review visibility', 'error');
       throw err;
@@ -1103,6 +1337,7 @@ export const RestaurantProvider: React.FC<{ children: ReactNode }> = ({ children
 
   const deleteReview = async (id: string) => {
     setReviews((prev) => prev.filter((r) => r.id !== id));
+    broadcastRealtimeEvent('REVIEW_DELETED', { id });
     try {
       await reviewService.deleteReview(id);
       showToast('Review deleted', 'info');
